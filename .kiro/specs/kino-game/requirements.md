@@ -327,6 +327,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 3. WHILE Kino changes animation or Movement_Mode, THE Game SHALL position Cosmetic layers correctly for the current animation and Movement_Mode.
 4. THE Game SHALL NOT require a unique full sprite per Cosmetic combination.
 5. WHEN a Cosmetic is unlocked, THE Game SHALL persist that Cosmetic permanently in the Save_Store across generations.
+6. THE Game SHALL treat each Cosmetic layer as a purely visual element and SHALL exclude every Cosmetic layer from collision detection, consistent with Requirement 41 criteria 4 and 5.
 
 ### Requirement 20: Main Menu and Treasure Map
 
@@ -711,6 +712,8 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 1. THE Game SHALL use a collision hitbox for Kino that is read from configurable balance values and MAY be smaller than Kino's rendered sprite to keep collisions fair.
 2. WHERE a Movement_Mode defines its own collision hitbox value, THE Game SHALL read that per-Movement_Mode hitbox value from configurable balance values, provided each per-Movement_Mode hitbox independently satisfies the collision-fairness intent.
 3. THE Game SHALL hold both the collision-fairness consistency and the consistency required by Requirement 26 criterion 7 at all times.
+4. THE Game SHALL detect collisions only between Kino's body hitbox and Obstacles, and SHALL NOT include any Cosmetic layer in collision detection.
+5. IF a Cosmetic layer visually overlaps an Obstacle while Kino's body hitbox does not overlap that Obstacle, THEN THE Game SHALL NOT register a collision.
 
 ### Requirement 42: Mentor Dialogue Content
 
@@ -755,6 +758,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 10. WHILE the Zigzag Movement_Mode is active, WHEN a Protective_Skill prevents a collision, THE Game SHALL place Kino in a safe position already moving along the up or down diagonal that maximizes clearance from the surface Kino nearly contacted.
 11. WHILE the Zigzag Movement_Mode is active and a Protective_Skill has repositioned Kino, THE Game SHALL return directional control to the player so that the player resumes changing Kino's diagonal direction with the primary action.
 12. THE Game SHALL apply the Time Erase reposition defined in Requirement 14 and the Ultra Instinct vertical-axis teleport defined in Requirement 18 subject to the mode-specific safe-reposition rules in this Requirement, where a mode-specific rule in this Requirement states the more specific placement for that Movement_Mode.
+13. THE Game SHALL evaluate every collision that ends a run or triggers a Protective_Skill reposition in this Requirement using only Kino's body hitbox against Obstacles, excluding every Cosmetic layer, consistent with Requirement 41 criteria 4 and 5.
 
 ### Requirement 45: Scrolling and Camera Model
 
