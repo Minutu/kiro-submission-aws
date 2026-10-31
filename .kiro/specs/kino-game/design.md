@@ -4,7 +4,7 @@
 
 KINO is a browser-based 2D side-scrolling arcade endless-runner built on **Phaser 3**. The player guides Kino — a ghost/bird hatchling — across five AWS-themed worlds, each introducing a movement ability (Jumping, Flight, Zigzag, Underwater_Buoyancy), culminating in a scripted World 5 finale that combines them all. The story loops generationally, granting permanent cosmetic rewards.
 
-This design turns the 46 requirements into an implementation-guiding technical plan. It is organized around four pillars:
+This design turns the 47 requirements into an implementation-guiding technical plan. It is organized around four pillars:
 
 1. **A Phaser scene graph** that cleanly separates boot/preload, menu, cinematics, gameplay, and overlays (satisfies Req 20, 21, 37).
 2. **An asset-decoupled, config-driven core** where all art/audio/text/palettes flow through a user-editable `Config_File` into an internal `Asset_Registry`, with placeholder fallback everywhere (Req 24, 33, 38).
@@ -111,7 +111,7 @@ graph TD
 | Scene | Responsibility | Key requirements |
 |---|---|---|
 | **BootScene** | Read `Config_File`, build `Asset_Registry`, load `Save_Store` (or create `First_Launch_State`), register scale/input managers | 33, 24.8, 40 |
-| **PreloadScene** (`Loading_Screen`) | Preload all registered assets with a progress bar; per-asset placeholder fallback on load failure; enable menu entry only when complete | 37.1–37.5 |
+| **PreloadScene** (`Loading_Screen`) | Preload all registered assets with a progress bar; per-asset placeholder fallback on load failure; enable menu entry once every required asset resolves (a placeholder counts as "loaded", Req 37.3) | 37.1–37.5 |
 | **MainMenuScene** | Treasure-map vertical scroll + lock-in, Kino on menu, generation pill, Stats/Settings/Cosmetics/Skills controls, bottom primary button (Start/Continue), Play control, endless triangles | 20, 23.4, 28.4, 31, 32, 34 |
 | **CinematicScene** | Opening egg-descent, mentor cutscenes, evolution, world-completion, final cinematic, credits/bloopers; all skippable | 21, 29, 42 |
 | **GameplayScene** (Run) | Drives the simulation core each fixed step, renders Kino/obstacles/parallax, HUD, scrolling model, transitions | 1–9, 44, 45, 46 |
@@ -565,6 +565,8 @@ When the finale Sequence starts, Flight is disabled and Kino descends to the gro
 - **Zigzag (46.3):** top/bottom walls bound the area; "obstacles" are the walls plus transition points (the scoring checkpoints, Req 4.2).
 - **Underwater (46.4):** `ceiling_underwater_obstacle` from top and `floor_underwater_obstacle` from bottom with a navigable gap; both categories appear in the sequence but not necessarily simultaneously (Req 5.11–5.13, 38.2).
 
+The atomic blue underwater overlay (`underwaterBlue`, applied to obstacles + Kino together, Req 38.4) is driven by the underwater condition (Underwater_Buoyancy active or an underwater Sequence active). When that condition becomes **false** — Underwater_Buoyancy is no longer active and no underwater Sequence is active — the blue overlay/tint is **immediately removed** from both obstacles and Kino in the same step (Req 38.7), with no lingering fade.
+
 ### Single-count scoring regardless of visual composition (Req 9.6)
 
 Each spawned `Obstacle` has one `id` and one `scoringLineX` even when `bounds` contains multiple visual rectangles (e.g., a flight pillar pair is one `Obstacle_Unit`). Scoring keys on `id`, so multi-element obstacles credit at most once (Req 9.6, 3.3, 2.3, 5.3).
@@ -625,7 +627,9 @@ The solver works in the world/scroll frame on the **current obstacle field snaps
 - **Jumping (Req 44.7):** place Kino directly to the **right** of the obstacle it would have hit, at ground level, offset by `hitbox.width/2 + epsilon` past the obstacle's right edge — guaranteed clear of that obstacle.
 - **Flight / Underwater (Req 44.8–44.9, 14.3):** scan vertical candidate positions at Kino's fixed `screenX` and pick the **nearest** y whose hitbox overlaps no obstacle (nearest non-overlapping gap). Candidates are generated from the gaps between the top/bottom pillar (or ceiling/floor) bounds in the current window; choose the gap center closest to Kino's current y.
 - **Zigzag (Req 44.10–44.11):** place Kino in a clear interior position already moving along the up- or down-diagonal that **maximizes clearance** from the wall it nearly contacted (if it nearly hit the top wall, send it on the downward diagonal, and vice versa). Then **return directional control to the player** so the next primary action resumes diagonal reversal.
-- **Ultra Instinct (Req 18.2, 44.12):** teleport along the **vertical axis** only, to the nearest clear y — same vertical scan as Flight/Underwater but framed as an instant evade; mode-specific rules in Req 44 take precedence where more specific.
+- **Ultra Instinct (Req 18.2, 44.12):** teleport along the **vertical axis** only, to the nearest clear y — same vertical scan as Flight/Underwater but framed as an instant evade.
+
+**Mode-specific precedence (Req 44.12).** Where a mode-specific safe-reposition rule exists in Req 44 for the active Movement_Mode, that rule is the **complete and sole** placement rule and **completely overrides** the Time Erase reposition (Req 14) and the Ultra Instinct vertical-axis teleport (Req 18) **entirely** for that mode — the generic Req 14 / Req 18 placement is not consulted at all when a Req 44 mode-specific rule applies. Thus the per-mode placements above (jumping right-of-obstacle, flight/underwater nearest gap, zigzag clearance-maximizing diagonal) govern both Time Erase and Ultra Instinct within their respective modes.
 
 ### Scan reliability
 
@@ -641,7 +645,9 @@ Skills and Perks are stored and processed by distinct systems with distinct pers
 
 ### Active skill lifecycle (Req 12, 13–18, 35)
 
-Each `Skill` tracks `cooldownRemaining` and `effectRemaining`. On activate: if `state !== "ready"` the activation is **silently deferred** with no feedback (Req 12.15). During a transition, activation is disabled (Req 12.4, 35.6). **Pause freezes both timers** — `cooldownRemaining` and `effectRemaining` are held and not advanced while paused, and resume continues from the held values (Req 7.10–7.12). This is enforced by only ticking timers from the fixed-step driver, which halts entirely under pause.
+Each `Skill` tracks `cooldownRemaining` and `effectRemaining`. On activate: if `state !== "ready"` the activation is **silently deferred** with no feedback (Req 12.16). During a transition, activation is disabled (Req 12.4, 35.6). **Pause freezes both timers** — `cooldownRemaining` and `effectRemaining` are held and not advanced while paused, and resume continues from the held values (Req 7.10–7.12). This is enforced by only ticking timers from the fixed-step driver, which halts entirely under pause.
+
+**Single equipped Skill (Req 12.15):** `SkillSystem` holds **at most one equipped Skill at any time**. Equipping a Skill sets it as the single equipped Skill and unequips any previously equipped Skill — consistent with the singular `Save_Store.equippedSkill` field, which stores the one equipped Skill id (or `null` when none is equipped).
 
 The seven skills:
 
@@ -693,6 +699,8 @@ Completing a generation: award a unique cosmetic (22.4), advance Junior→Senior
 
 `KinoRenderer` draws base Kino from a single sprite independent of cosmetics (19.1). Each equipped cosmetic (hat) is a separate transparent layer whose offset is looked up per `(movementMode, animationFrame)` from a cosmetic anchor table, so no unique combined sprite is needed (19.2–19.4). Cosmetic layers are **render-only**: they carry no collision geometry and are excluded from collision detection entirely — collision is evaluated against Kino's body hitbox alone (19.6; see Collision & Scoring, Req 41.4–41.5, 44.13). Cosmetic layers are hidden during transitions (6.5). In the menu, equipping a cosmetic or skill plays the `menu-equip-jiggle` (jello bob), a menu-only animation distinct from gameplay frames (43.1–43.5).
 
+**Single equipped Cosmetic (Req 19.7):** **at most one Cosmetic is equipped at any time**. Equipping a Cosmetic sets it as the single equipped Cosmetic and unequips any previously equipped one — consistent with the singular `Save_Store.equippedCosmetic` field, which stores the one equipped Cosmetic id (or `null` when none is equipped).
+
 ---
 
 ## Cinematics System (Req 21, 29, 42)
@@ -702,7 +710,7 @@ Completing a generation: award a unique cosmetic (22.4), advance Junior→Senior
 - **Opening (21.1, 21.11–21.18):** Mama Kino knocks an egg; it rolls to the button; permission-denied gag using `labels.permissionGag`; ground opens; egg falls through **five stacked horizontal bands** (World 5 top → World 1 bottom). The occupied band is **shown**, not-yet-reached bands **hidden**, passed bands **greyed silhouettes** (21.15). The World 1 band expands to fill screen for landing+hatch (21.16–21.17). Skippable (21.18).
 - **Mentor cutscene (21.2, 29.7, 42):** animated world background behind dialogue (42.3); speaker-swap layout — active speaker sprite + chatbox, other speaker greyed in a corner (42.4–42.6); then Evolution (electric-zap/glow/burst by default, 29.9); World 1 cracks egg into ghost hatchling, worlds 2–5 a subtle evolve (29.10–29.11). Skippable; skipped on same-generation retry when already evolved (21.3–21.4, 39.4).
 - **World completion (21.6–21.7):** short cinematic → menu → dissolve the newly unlocked silhouette.
-- **Final (21.8, 21.19–21.20, 32.3–32.4):** reunion, start a family, advance Junior→Senior, kick next egg labeled with next iteration + Junior.
+- **Final (21.8, 21.19–21.21, 32.3–32.4):** triggered when Kino jumps through the portal barrier (8.15); presented as a sequence of `Comic_Panels` advanced panel-by-panel in the comic-book style of the other cinematics (21.8), depicting reunion → starting a family → knocking the next egg out to loop the story. The Junior→Senior advancement (21.19, 32.3) and next-egg labeling with next iteration + Junior (21.20, 32.4) occur within that panel sequence. Skippable (21.21).
 - **Credits/bloopers (21.9):** config-supplied `creditsSlots`/`blooperSlots`.
 
 ---
@@ -712,7 +720,7 @@ Completing a generation: award a unique cosmetic (22.4), advance Junior→Senior
 - **Treasure map (20.2, 20.27–20.28, 34):** vertical scroll, World 1 at bottom, higher worlds stacked up, next reveal fading in at top. Scrolling snaps center to the nearest **discovered** world = `Locked_In_World`, highlighted with a side glow (34.1); a centered **undiscovered silhouette** shows no glow, locks nothing, indicates unselectable, and disables/ignores Play (34.3). Completed/discovered worlds greyed; undiscovered black silhouettes (20.3–20.4, 20.18–20.19).
 - **Endless triangle (20.29–20.31, 23.4–23.5):** right-side triangle per world; greyed/locked until cleared, active after; selecting it shows the "outside story progression" confirm.
 - **Controls:** Stats top-left opens Info panel (20.23), Settings top-right (20.24), Generation pill top-center (20.25), Cosmetics left of Kino + Skills right of Kino (20.26), bottom primary Start/Continue button (label from config by story position, 20.13), large Play button (20.32).
-- **Inventory_Panel (12.8–12.14, 19, 20.42–20.47, 43):** lower-half tabbed Cosmetics/Skills view; Kino fixed upper area; equipped item previewed above Kino with highlight; scrollable grid; locked/unowned greyed non-selectable; selecting owned item equips + updates preview + jiggle.
+- **Inventory_Panel (12.8–12.14, 19, 20.42–20.47, 43):** lower-half tabbed Cosmetics/Skills view; Kino fixed upper area; equipped item previewed above Kino with highlight; scrollable grid; locked/unowned greyed non-selectable; selecting an owned item equips it (single-select: replacing the current equipped item of that type — at most one Skill (12.15) and one Cosmetic (19.7) equipped) + updates preview + jiggle.
 - **Run HUD (20.39–20.41, 12.3, 12.7, 35.8, 17.2):** score top, equipped skill bottom-right with icon/availability/cooldown/duration, menu control, multiplier indicator, obstacles entering from right with ground at bottom.
 - **Run_End_Screen (28.4, 39):** final score, relevant high score, obstacles cleared, run time, Retry + Menu.
 - **Info panel (31):** obstacles cleared, perk effects as ±%, equipped skill, current score, this-generation vs past-generation high scores.
@@ -721,12 +729,23 @@ Completing a generation: award a unique cosmetic (22.4), advance Junior→Senior
 
 ## Non-Functional (Req 25, 26, 37)
 
-- **60 fps + graceful degradation (26.9):** under load, reduce non-essential particles/parallax detail rather than stalling; fixed-step sim decoupled from render.
-- **Object pooling (26.3):** obstacle and particle sprites recycled from pools.
-- **Efficient preload (37):** all required assets loaded behind the Loading_Screen with progress; per-asset placeholder fallback on failure; no asset-load stalls crossing menu/cinematic/gameplay.
+- **Efficient preload (37):** all required assets loaded behind the Loading_Screen with progress; per-asset placeholder fallback on failure; menu entry proceeds once every required asset resolves to either real art **or** its placeholder — a placeholder counts as "loaded" for enabling menu entry (Req 37.3); no asset-load stalls crossing menu/cinematic/gameplay.
 - **Adaptive scaling (26.10–26.12):** Phaser Scale Manager (FIT, squarish target); UI/gameplay reposition and rescale proportionally on resize.
 - **Input mapping (1):** spacebar / left-click = primary; right-click / Q = skill; rebindable, persisted, with conflict detection (reject + message) and rollback on persist failure.
 - **Audio (25):** distinct sounds per movement action, evolution, collision, UI, per-world music, mentor reactions; volume/mute persisted; audio starts only after first user interaction to satisfy autoplay policy.
+- **Performance (26.3, 26.5, 26.9):** 60 fps target with graceful degradation, sprite batching via atlases, obstacle/particle pooling, and flat-heap memory management — detailed below.
+
+### Performance & Optimization Guidelines
+
+These guidelines make the brief performance bullets above concrete. They are design-time directives for implementation and are verified by profiling under the integration/manual performance tests in the Testing Strategy (Req 26.9).
+
+**Frame budget / 60 fps target (Req 26.9, 26.2).** The 60 fps target gives a **~16.6 ms per-frame budget**; combined per-frame render + simulation work must stay within it. The fixed-timestep sim is decoupled from the render loop (see *The fixed-timestep driver*) so render slowdowns never corrupt gameplay timing; the accumulator **caps the number of catch-up sim steps per frame** to avoid a spiral-of-death where a slow frame schedules ever more sim work. Rendering is driven by Phaser's `requestAnimationFrame` loop. The hot path **allocates nothing per frame** — no new objects, arrays, or closures created each tick — reusing pre-allocated scratch vectors/structures instead, so steady-state running produces no per-frame GC pressure. **While gameplay is active** and under sustained load, a **graceful degradation ladder** sheds cost in order: (1) reduce particle counts, then (2) reduce parallax layer detail, then (3) drop non-essential visual effects — and never stalls the simulation or reduces input responsiveness (Req 26.2, 26.9). This degradation behavior is scoped to active gameplay (Req 26.9); it is not applied to menu, cinematic, or loading states.
+
+**Sprite batching (Req 26.3, 26.9).** All gameplay and UI sprites and their animation frames are packed into **texture atlases** (sprite sheets) so the renderer can batch draw calls out of a single bound texture, minimizing texture binds and draw-call count. Sprites that render together — a world's obstacles, the Kino body plus its Animation_Frame set, and the HUD — are grouped onto the **same atlas/page** so each scene's draws batch efficiently. The Kino body and its cosmetic layers are kept on compatible textures so layered rendering (Req 19.2–19.3) does not needlessly break batching; this is purely a rendering concern and does **not** affect the body-only collision basis (Req 41.4), which never consults textures. In placeholder mode the renderer draws simple generated shapes with no atlas; atlases apply transparently once real art is swapped in through the `Asset_Registry`, with **no gameplay changes** (Req 24.6).
+
+**Obstacle & particle pooling / memory management (Req 26.3, 26.5).** Pre-allocated **object pools** back both obstacle views and particle effects: views are **acquired on spawn and released — not destroyed — when scrolled off-screen left**, so no obstacle sprite is allocated or garbage-collected mid-run. Pools are **sized to the worst-case simultaneous on-screen count**, derived from `obstacleDensity.minGapPx`, screen width, and a safety margin, so steady-state runs perform **zero allocations**. The simulation core recycles its `Obstacle` data objects too (not just the Phaser views); on release **every field is reset** — including the `scored` latch — so no stale state leaks into the next use and the exactly-once scoring invariant (Property 1) is never undermined by reuse. Off-screen culling means the spawner/collision pass updates and collision-checks **only obstacles within or near the viewport window**; released pool objects are inert. Together, bounded pools plus shared atlases keep the **heap flat during long endless runs**; history/log buffers are capped rather than grown unbounded (Req 26.5).
+
+**Additional (Req 37, 25).** Efficient preloading is already covered above and under `PreloadScene` (Req 37) — all assets load once behind the Loading_Screen. Audio **reuses decoded buffers** and is never reloaded per play (Req 25). These guidelines are enforced via profiling during the manual/integration performance testing in the Testing Strategy (Req 26.9 profiling), not by automated property tests.
 
 ---
 
@@ -813,6 +832,13 @@ On load, `SaveStore.deserialize` wraps parsing in a guard. If the stored value i
 ### Missing / failed assets (Req 24.10, 33.7, 37.5)
 
 Any configured asset path that is empty, missing, or fails to load in `PreloadScene` resolves through `AssetRegistry` to its placeholder (geometric shape tinted from the world palette). Loading continues rather than blocking; gameplay logic is unaffected because it references only resolved keys. This covers both config-time omissions and runtime load errors.
+
+### Malformed Config_File & out-of-range balance values (Req 47)
+
+Config structure and balance-value validation complement the per-asset placeholder fallback: the placeholder fallback (Req 24.10, 33.6) covers missing asset **paths**, whereas Req 47 covers a **malformed Config_File structure** and **out-of-range balance values**. The two run in addition to each other (Req 47.4), and in every case the game remains startable and playable via defaults (Req 47.3).
+
+- **Config load validation (Req 47.1, 47.3).** `ConfigFile.loadAndValidate()` wraps parsing in a guard. IF the `Config_File` is unparseable or structurally invalid, the game falls back to the complete set of built-in default values and emits a developer warning/log **rather than crashing**. Boot then proceeds normally against the defaults, so the game stays startable and playable.
+- **Balance value validation (Req 47.2).** `BalanceTable` performs **range-clamping/validation at load** and is the single choke point for this check (consistent with the **Tuning ergonomics** subsection, where each value documents its unit, default, and sensible min/max range). WHEN a balance value is read, IF it is missing or outside its documented valid range (the min/max noted in the Balance Table / Tuning ergonomics), the `BalanceTable` substitutes the documented default for that key and emits a developer warning/log. Because every gameplay module reads tunables only through the `BalanceTable`, validated/defaulted values flow everywhere without per-call checks.
 
 ### Audio autoplay restrictions (Req 25.9)
 

@@ -1,0 +1,33 @@
+﻿{
+  "compilerOptions": {
+    /* Language / module target — modern ESNext for a Vite/bundler setup. */
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+
+    /* Emit: Vite handles transpilation/bundling, so tsc is type-check only. */
+    "noEmit": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "useDefineForClassFields": true,
+
+    /* Interop / resolution. */
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /* Strictness — full strict mode plus a few extra safety nets. */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  },
+  "//": "Minimal rebuild: only the active entry point and src/game are type-checked/built. The legacy src/core and src/engine trees remain on disk for reference but are not wired into the game.",
+  "include": ["src/main.ts", "src/game/**/*.ts"]
+}

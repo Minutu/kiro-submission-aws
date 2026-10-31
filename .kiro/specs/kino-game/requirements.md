@@ -23,11 +23,11 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 - **Obstacle_Unit**: A single countable scoring entity appropriate to the active movement mode (for example, one Flappy-Bird pillar passage).
 - **Scoring_Event**: A single increment to the player's score, tied to a specific obstacle or checkpoint, triggered exactly once.
 - **Perk**: A temporary passive bonus selected during a run. Perks reset each generation and are stored separately from skills.
-- **Skill**: An active, player-triggered ability equipped from the inventory and activated by a dedicated control. Skills are permanent across generations once unlocked. The seven Skills are Second Chance, Time Erase, Dash, Time Slow, Score Multiplier, Ultra Instinct, and Nuke. Skills are unlocked through World and Generation completion milestones (per a configurable unlock schedule in the Config_File), not through the perk-choice drop. Each Skill carries a rarity label used for display and flavor only; the rarity label does not change a Skill's gameplay effect.
+- **Skill**: An active, player-triggered ability equipped from the inventory and activated by a dedicated control. At most one Skill is equipped at any time. Skills are permanent across generations once unlocked. The seven Skills are Second Chance, Time Erase, Dash, Time Slow, Score Multiplier, Ultra Instinct, and Nuke. Skills are unlocked through World and Generation completion milestones (per a configurable unlock schedule in the Config_File), not through the perk-choice drop. Each Skill carries a rarity label used for display and flavor only; the rarity label does not change a Skill's gameplay effect.
 - **Protective_Skill**: A Skill that, while active, prevents an imminent collision from ending the run and repositions Kino to a safe position. The Protective_Skills are Time Erase (Requirement 14) and Ultra Instinct (Requirement 18). Second Chance (Requirement 13) protects Kino by phasing through one Obstacle rather than repositioning, and is not a Protective_Skill for the purpose of the safe-reposition rules in Requirement 44.
 - **Skill_Unlock_Schedule**: The configurable mapping, read from the Config_File, that assigns each Skill to a World-first-completion or Generation-completion milestone at which that Skill becomes unlocked.
 - **Loading_Screen**: The initial screen displayed while the Game preloads the assets required for play, showing loading progress until entry to the main menu is enabled.
-- **Cosmetic**: A visual customization item (primarily hats) rendered as a separate transparent layer over Kino. Cosmetics are permanent across generations once unlocked.
+- **Cosmetic**: A visual customization item (primarily hats) rendered as a separate transparent layer over Kino. At most one Cosmetic is equipped at any time. Cosmetics are permanent across generations once unlocked.
 - **Generation**: One full pass through the story. Completing a generation advances the generational name (for example, Kino III Junior, Kino III Senior, Kino IV Junior) and grants a unique cosmetic.
 - **Transition**: A visually telegraphed change between movement modes, controlled by the environment, during which skills are disabled and cosmetic layers are hidden.
 - **Mentor**: A themed non-player Kino character that introduces a world.
@@ -64,7 +64,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 4. WHEN the player presses the right mouse button, THE Game SHALL activate the equipped Skill.
 5. WHEN the player presses the Q key, THE Game SHALL activate the equipped Skill identically to the right mouse button.
 6. THE Game SHALL allow the player to reconfigure the primary-action and skill-activation controls.
-7. WHEN the player attempts to rebind a primary-action or skill-activation control to a control that is already assigned to another binding, THE Game SHALL display a conflict message identifying the already-assigned control and SHALL NOT apply the binding.
+7. WHEN the player attempts to rebind the primary-action binding or the skill-activation binding to a control that is already assigned to the other of these two bindings, THE Game SHALL display a conflict message identifying the already-assigned control and SHALL NOT apply the binding, where this conflict check applies only between the primary-action binding and the skill-activation binding and SHALL NOT be evaluated against any unrelated control.
 8. WHEN the player reconfigures a control, THE Game SHALL persist the reconfigured control binding in the Save_Store.
 9. IF persisting a reconfigured control binding fails, THEN THE Game SHALL roll back to the previous binding so that the previous binding remains active until persistence succeeds.
 
@@ -202,7 +202,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 3. IF a single Obstacle or checkpoint produces more than one Scoring_Event, a Scoring_Event of a value other than its defined value, or a Scoring_Event attributed to a Movement_Mode other than the one active at the moment of clearing, THEN THE Game SHALL treat that outcome as an invalid scoring result.
 4. WHILE a score multiplier is active, THE Game SHALL apply to each Scoring_Event the multiplier that is active at the moment the score for that Scoring_Event is credited.
 5. WHEN a Scoring_Event occurs, THE Game SHALL immediately update the score display to show the score value that results from applying that Scoring_Event.
-6. WHERE an Obstacle is composed of multiple visual elements, THE Game SHALL record at most one Scoring_Event for that Obstacle.
+6. WHERE an Obstacle is composed of multiple visual elements, THE Game SHALL record at most one Scoring_Event for that multi-element Obstacle, where this at-most-one rule governs only multi-element Obstacles and SHALL NOT apply to single-element Obstacles, which are governed by criteria 1 and 3 of this Requirement.
 
 ### Requirement 10: Perk Selection
 
@@ -213,7 +213,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 1. WHEN the player surpasses Obstacle 20 in a run, THE Game SHALL present exactly two Perk choices for selection.
 2. WHEN the player surpasses Obstacle 40 in a run, THE Game SHALL present exactly two Perk choices for selection.
 3. WHEN the player selects a Perk, THE Game SHALL apply that Perk for the remainder of the current run.
-4. IF a run ends by collision before the player reaches 50 points in a story World, THEN THE Game SHALL discard the Perks selected during that run and SHALL NOT retain those Perks.
+4. IF a run ends by collision before the player reaches 50 points in a story World, THEN THE Game SHALL discard the Perks selected during that run, SHALL NOT retain those Perks, and SHALL revert those Perks to a fully unselected and locked state as if they had never been chosen.
 5. WHEN the player reaches 50 points in a story World, THE Game SHALL retain the Perks selected during that clearing run for the remainder of the current Generation's story.
 6. WHEN a new Generation begins, THE Game SHALL reset retained Perks consistent with Requirement 22 criterion 3.
 7. THE Game SHALL NOT present Perk choices during an Endless_Mode run, consistent with Requirement 23 criterion 9.
@@ -254,7 +254,8 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 12. WHEN the player selects an owned Skill in the Inventory_Panel, THE Game SHALL mark that Skill equipped and reflect it in the preview above Kino.
 13. THE Game SHALL unlock active Skills through World and Generation completion milestones defined in the Skill_Unlock_Schedule, and SHALL NOT unlock Skills through the perk-choice drop.
 14. WHERE a Skill is displayed in the Inventory_Panel, THE Game SHALL indicate that Skill's rarity tier by color, consistent with how Cosmetic rarity is shown.
-15. WHEN the player activates an equipped Skill while that Skill is on cooldown or otherwise unavailable, THE Game SHALL silently defer the activation and SHALL NOT display any indication of the activation.
+15. WHEN the player equips a Skill, THE Game SHALL set that Skill as the single equipped Skill and SHALL unequip any previously equipped Skill, so that at most one Skill is equipped at any time.
+16. WHEN the player activates an equipped Skill while that Skill is on cooldown or otherwise unavailable, THE Game SHALL silently defer the activation and SHALL NOT display any indication of the activation.
 
 ### Requirement 13: Active Skill — Second Chance
 
@@ -295,7 +296,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 
 #### Acceptance Criteria
 
-1. WHEN the player activates Time Slow, THE Game SHALL slow Kino's movement and Obstacle progression together by a consistent factor.
+1. WHEN the player activates Time Slow, THE Game SHALL slow Kino's movement and Obstacle progression together by the same single configured Time Slow factor applied to both.
 2. THE Game SHALL read the Time Slow factor and duration from configurable balance values.
 
 ### Requirement 17: Active Skill — Score Multiplier
@@ -328,6 +329,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 4. THE Game SHALL NOT require a unique full sprite per Cosmetic combination.
 5. WHEN a Cosmetic is unlocked, THE Game SHALL persist that Cosmetic permanently in the Save_Store across generations.
 6. THE Game SHALL treat each Cosmetic layer as a purely visual element and SHALL exclude every Cosmetic layer from collision detection, consistent with Requirement 41 criteria 4 and 5.
+7. WHEN the player equips a Cosmetic, THE Game SHALL set that Cosmetic as the single equipped Cosmetic and SHALL unequip any previously equipped Cosmetic, so that at most one Cosmetic is equipped at any time.
 
 ### Requirement 20: Main Menu and Treasure Map
 
@@ -347,10 +349,11 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 10. WHEN the player opens the Info control, THE Game SHALL display current run statistics.
 11. THE Game SHALL display the current Generation name prominently on the menu.
 12. WHEN the player presses the Continue Story control, THE Game SHALL expand to full screen, keep Kino placed, and glide Kino to the gameplay start position.
-13. THE Game SHALL present a bottom primary button whose label depends on the player's current story position, read from the Config_File as follows:
-    - 13a. WHILE the player's current story position is World 1 at the beginning and the story is not yet started, THE Game SHALL label the bottom primary button with the "Start Story" label value read from the Config_File.
+13. THE Game SHALL present a bottom primary button whose label depends on the player's current story position, read from the Config_File, under the following exhaustive and mutually exclusive cases:
+    - 13a. WHILE the player's current story position is World 1 and the story has not been started, THE Game SHALL label the bottom primary button with the "Start Story" label value read from the Config_File.
     - 13b. WHILE the player's current story position is beyond World 1, THE Game SHALL label the bottom primary button with the "Continue Story" label value read from the Config_File.
-    - 13c. THE Game SHALL read both the "Start Story" label value and the "Continue Story" label value from the Config_File.
+    - 13c. WHILE the player's current story position is World 1 and the story has been started, THE Game SHALL label the bottom primary button with the "Continue Story" label value read from the Config_File.
+    - 13d. THE Game SHALL read both the "Start Story" label value and the "Continue Story" label value from the Config_File.
 14. WHEN the player presses the bottom primary button, THE Game SHALL launch the next available story step.
 15. THE Game SHALL present a top header section containing a replay control and the current Generation_Name.
 16. WHILE the menu is displayed, THE Game SHALL display the player's Kino on the menu.
@@ -403,9 +406,9 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 5. WHEN a new Generation begins, THE Game SHALL play the mentor cutscene again on the first entry of each World.
 6. WHEN a World is completed, THE Game SHALL play a short world-completion cinematic and then return the player to the menu.
 7. WHEN the player returns to the menu after completing a World, THE Game SHALL dissolve the newly unlocked World's silhouette to reveal the World.
-8. WHEN the final World is completed, THE Game SHALL play the final cinematic depicting Kino's reunion, starting a family, and kicking the next egg to loop the story.
+8. WHEN Kino Jumps through the portal barrier consistent with Requirement 8 criterion 15, THE Game SHALL present the final cinematic as a sequence of Comic_Panels advanced panel-by-panel in the comic-book style used by the other cinematics, depicting Kino's reunion, starting a family, and knocking the next egg out to loop the story.
 9. WHEN the final cinematic ends, THE Game SHALL present credits that include blooper-style outtakes referencing the creator and inspiration.
-10. WHEN a new Generation begins, THE Game SHALL render previously discovered Worlds in a greyed state rather than black.
+10. WHEN a new Generation begins, THE Game SHALL render any previously discovered World in a greyed state rather than black, applying the greyed state to every previously discovered World regardless of when the generation transition occurs relative to that World's discovery.
 11. WHEN the opening cinematic begins, THE Game SHALL depict Mama Kino sitting on eggs in a henhouse inside a data center and knocking one egg out while scratching.
 12. WHEN the knocked-out egg rolls down the ramp and strikes the button, THE Game SHALL display a permission-denied gag using the gag text value read from the Config_File.
 13. WHEN the permission-denied gag has been displayed, THE Game SHALL open the ground and cause the egg to fall.
@@ -416,6 +419,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 18. THE Game SHALL make the opening cinematic skippable.
 19. WHEN a Generation's story is completed, THE Game SHALL advance the current Kino from Junior to Senior of the same iteration number in the final cinematic.
 20. WHEN the final cinematic depicts the next egg being knocked out, THE Game SHALL label that egg with the next iteration number and the Junior suffix.
+21. THE Game SHALL make the final cinematic Comic_Panel sequence skippable, consistent with the other skippable cinematics.
 
 ### Requirement 22: Generational Persistence
 
@@ -442,7 +446,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 3. WHILE an Endless_Mode run continues, THE Game SHALL ramp difficulty by increasing speed, density, obstacle configuration difficulty, and Transition frequency.
 4. WHERE a World is discovered and completed, THE Game SHALL present an Endless_Mode control in the top-right of that World on the map.
 5. WHEN the player selects the Endless_Mode control, THE Game SHALL present a confirmation stating that Endless_Mode is outside story progression.
-6. WHEN an Endless_Mode run ends, THE Game SHALL award no story progress, unlocks, Perks, or Cosmetics.
+6. WHILE an Endless_Mode run is active or ending, THE Game SHALL block story progress at all times with no exceptions and SHALL award no story progress, unlocks, Perks, or Cosmetics.
 7. WHILE a World is played in Endless_Mode, THE Game SHALL restrict movement to the abilities available up to and including that World in the story.
 8. THE Game SHALL NOT allow abilities from Worlds later than the played World to be used in that World's Endless_Mode run.
 9. THE Game SHALL NOT present Perk choices during an Endless_Mode run.
@@ -495,7 +499,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 6. THE Game SHALL implement obstacle and ability systems as reusable modules so that new abilities and obstacles can be added without rewriting the game.
 7. THE Game SHALL apply consistent collision detection across all Movement_Modes.
 8. THE Game SHALL read per-World difficulty from scalable configuration values.
-9. WHILE gameplay is active, THE Game SHALL target 60 frames per second, and IF the Game is under load, THEN THE Game SHALL degrade gracefully by reducing non-essential visual effects rather than stalling.
+9. WHILE gameplay is active, THE Game SHALL target 60 frames per second and, IF the Game is under load, THEN THE Game SHALL degrade gracefully by reducing non-essential visual effects rather than stalling.
 10. THE Game SHALL render an Adaptive_Layout that resizes to fit the available screen rather than a fixed phone-sized viewport.
 11. THE Game SHALL target a squarish desktop-style aspect ratio and SHALL remain usable across common desktop and tablet screen sizes.
 12. WHEN the screen size changes, THE Game SHALL reposition and rescale UI and gameplay elements proportionally.
@@ -520,7 +524,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 12. THE Game SHALL render World 5 environment elements including a futuristic data center, security infrastructure, defensive barriers, and restricted zones.
 13. THE Game SHALL apply each World's Color_Palette from the Config_File, defaulting World 1 to warm orange and sandy yellow, World 2 to industrial orange-red with steel grey and lava glow, World 3 to deep blue and jungle green, World 4 to glacier cyan with teal and icy white, and World 5 to dark steel with red alert accents, where each per-World Color_Palette defines element-level color treatment for background, Obstacles, and Kino rather than a background color alone.
 14. THE Game SHALL include element-level overlay/tint treatment in each World's Color_Palette default, defaulting the underwater sequences to a blue overlay applied over the Obstacles and Kino.
-15. WHEN the player advances past a story World, THE Game SHALL mark that earlier World as left behind and SHALL NOT allow replaying that World in story mode, leaving Endless_Mode as the only way to replay a completed World.
+15. WHEN the player advances past a story World, THE Game SHALL mark that earlier World as left behind and SHALL fully lock story-mode access to that World, allowing neither a story-mode replay nor a story-mode revisit to recover missed content, leaving Endless_Mode as the only mode through which the player can return to that completed World.
 16. WHEN a World is marked left behind, THE Game SHALL block story-mode replay access to that World only, and SHALL keep all rewards and unlocks previously earned from that World valid and unaffected.
 
 ### Requirement 28: High-Score Tracking
@@ -551,7 +555,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 9. THE Game SHALL read the Evolution animation style from the Config_File, defaulting to an electric-zap, glowing-outline, and energy-burst effect.
 10. WHEN the World 1 Evolution plays, THE Game SHALL depict the egg cracking into the walking and jumping baby ghost.
 11. WHEN an Evolution plays in Worlds 2 through 5, THE Game SHALL show an evolution effect with a subtle visual change to Kino.
-12. THE Game SHALL read the base character name "Kino" and all Mentor names from the Config_File so that they can be renamed without changes to gameplay logic.
+12. THE Game SHALL read the base character name "Kino" and all Mentor names from the Config_File so that they can be renamed without changes to gameplay logic, where the base name "Kino" and the Mentor names quoted in this Requirement are defaults only and THE Game SHALL treat any name value supplied by the Config_File, including a value different from the stated default, as a valid name read from the Config_File.
 
 ### Requirement 30: Visual Direction
 
@@ -591,7 +595,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 #### Acceptance Criteria
 
 1. THE Game SHALL compose the Generation_Name from a base character name, an iteration number, and a Junior or Senior suffix.
-2. THE Game SHALL read the base character name and the generational naming scheme from the Config_File so that they can be changed without changes to gameplay logic.
+2. THE Game SHALL read the base character name and the generational naming scheme from the Config_File so that they can be changed without changes to gameplay logic, where the base name "Kino" is a default only and THE Game SHALL treat any base character name supplied by the Config_File, including a value different from the stated default, as a valid name read from the Config_File.
 3. WHEN a Generation's story is completed, THE Game SHALL change the current Kino's suffix from Junior to Senior while retaining the same iteration number.
 4. WHEN the final cinematic shows the next egg being knocked out, THE Game SHALL label that egg with the next iteration number and the Junior suffix.
 5. WHEN a new Generation begins, THE Game SHALL render previously discovered Worlds in a greyed state rather than a black silhouette.
@@ -604,7 +608,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 
 1. THE Game SHALL provide a Config_File that declares, as named editable variables, asset paths for Kino Animation_Frames per Movement_Mode and per required frame, cosmetic and hat image paths, Mentor image paths, per-World background and obstacle sprite paths, and audio paths.
 2. THE Game SHALL declare in the Config_File the exact set of Animation_Frames required per Movement_Mode, each mapped to a clearly named key.
-3. THE Game SHALL read all user-facing names and labels from the Config_File, including the base character name, Mentor names, World names, the generational naming scheme, UI labels such as the "CONTINUE STORY" label, and the permission-denied gag text.
+3. THE Game SHALL read all user-facing names and labels from the Config_File, including the base character name, Mentor names, World names, the generational naming scheme, UI labels such as the "Start Story" and "Continue Story" labels, and the permission-denied gag text.
 4. THE Game SHALL read each per-World placeholder Color_Palette from the Config_File, including element-level color treatment for background, Obstacles, and Kino rather than a background color alone.
 5. THE Game SHALL read element-level overlay/tint treatments from the Config_File so that they can be adjusted or replaced without changes to gameplay logic.
 6. WHEN a Config_File value for an asset path, name, label, or Color_Palette is changed, THE Game SHALL use the new value without changes to gameplay logic.
@@ -666,7 +670,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 
 1. WHEN the Game starts, THE Game SHALL display the Loading_Screen while it preloads the assets required for play.
 2. WHILE assets are loading, THE Game SHALL display loading progress to the player.
-3. WHEN all required assets have finished loading, THE Game SHALL enable entry to the main menu.
+3. WHEN every required asset has resolved to either its real asset or its placeholder, THE Game SHALL treat every required asset as loaded and SHALL enable entry to the main menu, where an asset resolved to its placeholder counts as loaded for the purpose of enabling menu entry.
 4. THE Game SHALL preload assets so that transitions between the menu, cinematic, and gameplay states occur without asset-load stalls.
 5. WHERE an asset fails to load, THE Game SHALL fall back to that asset's placeholder, consistent with Requirement 24 criterion 10 and Requirement 33 criterion 7, and SHALL continue rather than blocking the Game.
 
@@ -682,6 +686,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 4. WHILE the Underwater_Buoyancy Movement_Mode is active or an underwater Sequence is active, THE Game SHALL apply the blue overlay/tint to both the Obstacles and Kino together as one atomic underwater treatment so that the scene reads as underwater.
 5. THE Game SHALL read element-level overlay/tint treatments from the Config_File so that they can be adjusted or replaced without changes to gameplay logic.
 6. WHEN a Config_File Obstacle_Category key or overlay/tint treatment value is changed, THE Game SHALL use the new value without changes to gameplay logic.
+7. WHEN the underwater condition becomes false because the Underwater_Buoyancy Movement_Mode is no longer active and no underwater Sequence is active, THE Game SHALL immediately remove the blue underwater overlay/tint from the Obstacles and Kino.
 
 ### Requirement 39: Run-End Screen
 
@@ -757,7 +762,7 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 9. WHILE the Underwater_Buoyancy Movement_Mode is active, WHEN a Protective_Skill prevents a collision, THE Game SHALL place Kino in a safe position that does not overlap any Obstacle, consistent with Requirement 14 criterion 3.
 10. WHILE the Zigzag Movement_Mode is active, WHEN a Protective_Skill prevents a collision, THE Game SHALL place Kino in a safe position already moving along the up or down diagonal that maximizes clearance from the surface Kino nearly contacted.
 11. WHILE the Zigzag Movement_Mode is active and a Protective_Skill has repositioned Kino, THE Game SHALL return directional control to the player so that the player resumes changing Kino's diagonal direction with the primary action.
-12. THE Game SHALL apply the Time Erase reposition defined in Requirement 14 and the Ultra Instinct vertical-axis teleport defined in Requirement 18 subject to the mode-specific safe-reposition rules in this Requirement, where a mode-specific rule in this Requirement states the more specific placement for that Movement_Mode.
+12. WHERE a mode-specific safe-reposition rule in this Requirement exists for the active Movement_Mode, THE Game SHALL apply that mode-specific rule as the complete and sole placement rule and SHALL override the Time Erase reposition defined in Requirement 14 and the Ultra Instinct vertical-axis teleport defined in Requirement 18 entirely for that Movement_Mode.
 13. THE Game SHALL evaluate every collision that ends a run or triggers a Protective_Skill reposition in this Requirement using only Kino's body hitbox against Obstacles, excluding every Cosmetic layer, consistent with Requirement 41 criteria 4 and 5.
 
 ### Requirement 45: Scrolling and Camera Model
@@ -782,3 +787,14 @@ Where the source vision documents conflict, v1.2 Gameplay Systems supersedes v1.
 2. WHILE the Flight Movement_Mode is active, THE Game SHALL present Obstacles as vertical pillars extending from the top and from the bottom with a gap through which Kino passes, SHALL render a ground at the bottom, and SHALL scroll a dynamic background past Kino, consistent with Requirement 3.
 3. WHILE the Zigzag Movement_Mode is active, THE Game SHALL bound the play area with a top wall and a bottom wall, SHALL move Kino on a diagonal that bounces between the walls, and IF Kino contacts either wall while no Protective_Skill is active, THEN THE Game SHALL end the current run, consistent with Requirement 4 and Requirement 44 criterion 4.
 4. WHILE the Underwater_Buoyancy Movement_Mode is active, THE Game SHALL render a Transition_Pane at the water surface and SHALL present ceiling_underwater_obstacle hazards extending from the top and floor_underwater_obstacle hazards extending from the bottom with a gap navigated using inverted buoyancy, consistent with Requirement 5 criteria 11 and 12 and Requirement 38 criterion 2.
+
+### Requirement 47: Configuration Validation and Fallback
+
+**User Story:** As a user editing the configuration layer, I want the game to tolerate a malformed Config_File and out-of-range balance values by using documented defaults, so that an editing mistake never leaves the game unable to start or play.
+
+#### Acceptance Criteria
+
+1. WHEN the Game loads the Config_File, IF the Config_File is malformed because it is not parseable or is structurally invalid, THEN THE Game SHALL fall back to the built-in default values and SHALL generate a developer warning log rather than crashing.
+2. WHEN the Game reads a balance value, IF that balance value is missing or outside its documented valid range, THEN THE Game SHALL use the documented default value for that key and SHALL generate a developer warning log.
+3. WHILE the Config_File is malformed or contains out-of-range balance values, THE Game SHALL remain startable and playable by using the built-in default values.
+4. THE Game SHALL apply the Config_File structure and balance-value validation defined in this Requirement in addition to the per-asset placeholder fallback defined in Requirement 24 criterion 10 and Requirement 33 criterion 7, where the per-asset placeholder fallback covers missing asset paths and this Requirement covers malformed Config_File structure and out-of-range balance values.
