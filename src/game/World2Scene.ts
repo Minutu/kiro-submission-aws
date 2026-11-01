@@ -10,6 +10,10 @@ import { GAME_WIDTH, GAME_HEIGHT, WORLD2 } from './config.ts';
 import { HatSprite, loadHatAssets } from './cosmetics.ts';
 import { SkillRuntime } from './skills.ts';
 import { PauseController } from './pause.ts';
+import { maybeUnlockAndToast, worldNumberFromKey } from './progression.ts';
+import { paletteForWorld } from './uiTheme.ts';
+import { addText } from './ui.ts';
+import { loadJumpSfx, playJumpSfx } from './music.ts';
 
 interface Pipe {
   top: Phaser.GameObjects.Image;    // ceiling pillar (pillar-up)
@@ -56,11 +60,13 @@ export class World2Scene extends Phaser.Scene {
     this.load.image('w2-bg2', `${W2_DIR}/bg-2.png`);
     this.load.image('w2-cloud0', `${W2_DIR}/cloud-0.png`);
     this.load.image('w2-cloud2', `${W2_DIR}/cloud-2.png`);
+    this.load.image('w2-moon', `${W2_DIR}/bg-moon.png`);
     this.load.image('kino-fly', 'assets/animation/fly-0.png');
     this.load.image('kino-fall', 'assets/animation/fall-0.png');
     this.load.image('kino-dead', 'assets/kino-dead.png');
     this.load.image('w2-pillar-ground', `${W2_DIR}/pillar-ground.png`);
     this.load.image('w2-pillar-up', `${W2_DIR}/pillar-up.png`);
+    loadJumpSfx(this);
   }
 
   create(): void {
@@ -103,26 +109,18 @@ export class World2Scene extends Phaser.Scene {
       () => this.score,
       () => this.started && !this.dead,
       () => !this.dead,
+      paletteForWorld(2),
+      () => this.dead,
     );
 
-    this.scoreText = this.add
-      .text(GAME_WIDTH / 2, 70, '0', {
-        fontFamily: 'sans-serif',
-        fontSize: '72px',
-        color: '#ffffff',
-        fontStyle: 'bold',
-      })
-      .setOrigin(0.5)
-      .setDepth(10);
+    this.scoreText = addText(this, GAME_WIDTH / 2, 70, '0', { fontSize: 64 }).setDepth(12);
 
-    const hint = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT * 0.4, 'Click or Space to flap', {
-        fontFamily: 'sans-serif',
-        fontSize: '36px',
-        color: '#ffffff',
-      })
-      .setOrigin(0.5)
-      .setDepth(10);
+    // Movement-mode label (World 2 is always Flight).
+    addText(this, GAME_WIDTH / 2, 128, 'FLIGHT', { fontSize: 28 }).setDepth(12);
+
+    const hint = addText(this, GAME_WIDTH / 2, GAME_HEIGHT * 0.4, 'Click or Space to flap', {
+      fontSize: 36,
+    }).setDepth(12);
 
     const flap = () => {
       if (hint.active) hint.setVisible(false);
@@ -158,6 +156,15 @@ export class World2Scene extends Phaser.Scene {
     sky.fillGradientStyle(topCol, topCol, bottomCol, bottomCol, 1);
     sky.fillRect(0, 0, GAME_WIDTH, groundY + 40);
 
+    // Static moon, top-right-ish and inset from the edges, behind clouds/dunes.
+    const moon = this.add
+      .image(GAME_WIDTH * 0.78, GAME_HEIGHT * 0.2, 'w2-moon')
+      .setOrigin(0.5, 0.5)
+      .setDepth(1);
+    moon.setScale(Math.min(1, (GAME_WIDTH * 0.28) / moon.width));
+    // Soften just the moon with a very light blur.
+    moon.postFX.addBlur(0, 1, 1, 0.4, 0xffffff, 2);
+
     // Clouds (smoke/ember clouds), mostly small with the occasional big one.
     const cloudKeys = ['w2-cloud0', 'w2-cloud2'];
     for (let i = 0; i < 6; i++) {
@@ -167,7 +174,7 @@ export class World2Scene extends Phaser.Scene {
       const cloudScale = Math.random() < 0.2
         ? Phaser.Math.FloatBetween(0.35, 0.55)
         : Phaser.Math.FloatBetween(0.12, 0.25);
-      const img = this.add.image(x, y, key).setDepth(1).setScale(cloudScale).setAlpha(0.85);
+      const img = this.add.image(x, y, key).setDepth(2).setScale(cloudScale).setAlpha(0.85);
       img.setFlipX(Math.random() < 0.5);
       img.setFlipY(Math.random() < 0.5);
       this.clouds.push({ img, speed: Phaser.Math.FloatBetween(0.05, 0.12) });
@@ -175,9 +182,9 @@ export class World2Scene extends Phaser.Scene {
 
     // Parallax layers: bg-2 farthest/slowest/tallest behind, bg-0 nearest/
     // fastest/shortest in front — same A, A-mirrored, A pattern as World 1.
-    this.layers.push(this.buildLayer('w2-bg2', 2, 0.15, groundY, 0.62));
-    this.layers.push(this.buildLayer('w2-bg1', 3, 0.30, groundY, 0.42));
-    this.layers.push(this.buildLayer('w2-bg0', 4, 0.55, groundY, 0.22));
+    this.layers.push(this.buildLayer('w2-bg2', 3, 0.15, groundY, 0.62));
+    this.layers.push(this.buildLayer('w2-bg1', 4, 0.30, groundY, 0.42));
+    this.layers.push(this.buildLayer('w2-bg0', 5, 0.55, groundY, 0.22));
   }
 
   private buildLayer(
@@ -233,8 +240,10 @@ export class World2Scene extends Phaser.Scene {
       this.scene.restart();
       return;
     }
+    if (this.paused) return;
     this.started = true;
     this.vy = WORLD2.flapVelocity;
+    playJumpSfx(this);
   }
 
   /** Flight animation: fly-0 while rising, fall-0 while descending. */
@@ -328,6 +337,7 @@ export class World2Scene extends Phaser.Scene {
         this.score += 1;
         this.scoreText.setText(String(this.score));
         this.skill.notifyObstacleCleared();
+        maybeUnlockAndToast(this, worldNumberFromKey('World2'), this.score);
       }
     }
 
@@ -417,15 +427,10 @@ export class World2Scene extends Phaser.Scene {
     this.dead = true;
     this.bird.setTexture('kino-dead').setScale(this.birdScale);
 
-    this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'Game Over\nScore: ' + this.score + '\nClick to retry  -  Esc for menu', {
-        fontFamily: 'sans-serif',
-        fontSize: '56px',
-        color: '#ffffff',
-        align: 'center',
-        fontStyle: 'bold',
-      })
-      .setOrigin(0.5)
-      .setDepth(20);
+    addText(
+      this, GAME_WIDTH / 2, GAME_HEIGHT / 2,
+      'Game Over\nScore: ' + this.score + '\nClick to retry  -  Esc for menu',
+      { fontSize: 52 },
+    ).setDepth(20);
   }
 }

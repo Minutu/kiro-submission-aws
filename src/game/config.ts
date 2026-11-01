@@ -235,8 +235,8 @@ export type MovementMode = 'flight' | 'zigzag' | 'underwater';
 export interface WorldTheme {
   /** Unique key prefix so multiple worlds can coexist in the texture cache. */
   keyPrefix: string;
-  /** Flight parallax dune layers (far -> near). 3 paths. */
-  duneLayers: [string, string, string];
+  /** Flight parallax dune layers (far -> near). Any count (3 or more). */
+  duneLayers: string[];
   /** Flight pillar sprites (ceiling, ground). */
   flightPillarUp: string;
   flightPillarGround: string;
@@ -252,6 +252,28 @@ export interface WorldTheme {
   /** Flight edge-bar colors. */
   flightTopBar: number;
   flightBottomBar: number;
+  /** Edge-bar color during zigzag/cave segments. */
+  caveBar: number;
+  /**
+   * When true, the "underwater" mode is REVERSE GRAVITY: it reuses the FLIGHT
+   * dunes + pillars flipped vertically (Y), instead of separate underwater art.
+   * The flight top/bottom bar colors also swap. (World 5.)
+   */
+  reverseGravity?: boolean;
+  /** When true, draw the zigzag corridor as a laser (bright-red outer glow +
+   * white inner core) instead of plain lines. (World 5.) */
+  laserCorridor?: boolean;
+  /** When true, draw the zigzag corridor walls as blue icicles with an icy
+   * gradient (light-cyan tips -> deeper blue base) instead of plain lines.
+   * (World 4.) */
+  icyCorridor?: boolean;
+  /** Optional STATIC background image, its TOP touching the ceiling and NOT
+   * scrolled. Shown during flight. */
+  moonBg?: string;
+  /** Horizontal center of the moon as a fraction of screen width (default 0.72). */
+  moonXFrac?: number;
+  /** When true, apply a soft blur to the moon image. */
+  moonBlur?: boolean;
 }
 
 export interface SequenceConfig {
@@ -298,6 +320,10 @@ const WORLD3_THEME: WorldTheme = {
   skyBottom: 0xe6803a,
   flightTopBar: 0x0a1230,
   flightBottomBar: 0x06160a,
+  caveBar: 0x000000, // black (Memory Jungle)
+  moonBg: 'assets/world 3/bg-moon-jungle.png',
+  moonXFrac: 0.25, // left side
+  moonBlur: true,
 };
 
 const WORLD4_THEME: WorldTheme = {
@@ -314,6 +340,11 @@ const WORLD4_THEME: WorldTheme = {
   skyBottom: 0xbfe3f7,
   flightTopBar: 0x16314a,
   flightBottomBar: 0x1a3a4a,
+  caveBar: 0x060a1e, // dark dark blue (Ice)
+  moonBg: 'assets/world 4/bg-moon-ice.png',
+  moonXFrac: 0.8, // right side
+  moonBlur: true,
+  icyCorridor: true, // zigzag walls render as blue icicles
 };
 
 /** World 3: Flight <-> Zigzag (no underwater). */
@@ -332,10 +363,39 @@ export const WORLD4_SEQUENCE: SequenceConfig = {
   theme: WORLD4_THEME,
 };
 
-/** World 5: same chain + theme as World 4. */
+const WORLD5_THEME: WorldTheme = {
+  keyPrefix: 'w5',
+  // Dune layers (far -> near). bg-4 is NOT here — it's the static moon.
+  duneLayers: [
+    'assets/world 5/bg-3.png',
+    'assets/world 5/bg-2.png',
+    'assets/world 5/bg-1.png',
+    'assets/world 5/bg-0.png',
+  ],
+  moonBg: 'assets/world 5/bg-4.png',
+  flightPillarUp: 'assets/world 5/pillar-up.png',
+  flightPillarGround: 'assets/world 5/pillar-down.png',
+  caveBg: 'assets/world 5/bg-cave.png',
+  // Reverse gravity reuses the flight dunes + pillars flipped vertically, so
+  // the "underwater" asset fields just mirror the flight ones.
+  underwaterBg: 'assets/world 5/bg-cave.png', // unused for bg (reverse gravity flips flight dunes)
+  underwaterPillarUp: 'assets/world 5/pillar-up.png',
+  underwaterPillarGround: 'assets/world 5/pillar-down.png',
+  // Sky: pink sunset at the bottom rapidly toward red/dark red at the top.
+  skyTop: 0x3a0808,    // dark red (top)
+  skyBottom: 0xe85a7a, // pink sunset (bottom)
+  flightTopBar: 0x1a0620,  // dark red -> blue (night-sky-ish)
+  flightBottomBar: 0x200404, // very dark red
+  caveBar: 0x120306, // near-black dark red
+  reverseGravity: true,
+  laserCorridor: true,
+  moonXFrac: 0.5, // center
+};
+
+/** World 5: full chain, reverse-gravity + laser theme. */
 export const WORLD5_SEQUENCE: SequenceConfig = {
   start: 'flight',
   segmentPoints: 4,
   adjacency: CHAIN_ADJACENCY,
-  theme: WORLD4_THEME,
+  theme: WORLD5_THEME,
 };

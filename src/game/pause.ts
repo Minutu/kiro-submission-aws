@@ -9,6 +9,8 @@
 // (not paused, not dead, started), so the displayed time excludes paused time.
 
 import Phaser from 'phaser';
+import { addText } from './ui.ts';
+import { doodleButton, type UIPalette } from './uiTheme.ts';
 
 export class PauseController {
   private paused = false;
@@ -31,6 +33,11 @@ export class PauseController {
     // screen). Defaults to always-pausable so you can pause immediately after
     // entering a world, before the first flap.
     private readonly canPause: () => boolean = () => true,
+    // Current world's UI palette (drives the pause button + overlay colors).
+    private readonly pal?: UIPalette,
+    // True when the run is over (death) — the overlay then offers Restart +
+    // Menu instead of Resume + Menu.
+    private readonly isDead: () => boolean = () => false,
   ) {
     this.buildButton();
     // Esc and P both toggle the pause menu.
@@ -61,18 +68,19 @@ export class PauseController {
     const y = 50;
     this.btnX = x;
     this.btnY = y;
+    const fill = this.pal?.secondary ?? 0x2c3e66;
+    const border = this.pal?.panelBorder ?? 0xffffff;
+    // Rounded doodle pause button.
+    const g = this.scene.add.graphics().setDepth(45);
+    g.fillStyle(fill, 1);
+    g.fillRoundedRect(x - this.btnW / 2, y - this.btnH / 2, this.btnW, this.btnH, 16);
+    g.lineStyle(4, border, 1);
+    g.strokeRoundedRect(x - this.btnW / 2, y - this.btnH / 2, this.btnW, this.btnH, 16);
     this.button = this.scene.add
-      .rectangle(x, y, this.btnW, this.btnH, 0x2c3e66)
-      .setStrokeStyle(3, 0xffffff)
-      .setDepth(45)
+      .rectangle(x, y, this.btnW, this.btnH, 0x000000, 0)
+      .setDepth(46)
       .setInteractive({ useHandCursor: true });
-    this.scene.add
-      .text(x, y, 'II', {
-        fontFamily: 'sans-serif', fontSize: '28px', color: '#ffffff', fontStyle: 'bold',
-      })
-      .setOrigin(0.5)
-      .setDepth(46);
-
+    addText(this.scene, x, y, 'II', { fontSize: 28 }).setDepth(46);
     this.button.on('pointerup', () => this.toggle());
   }
 
@@ -93,8 +101,9 @@ export class PauseController {
   }
 
   private pause(): void {
-    // Pausable anytime except on the game-over screen.
-    if (!this.canPause()) return;
+    // Pausable anytime: during a run (via canPause) or on the game-over screen
+    // (where the overlay offers Restart + Menu instead of Resume + Menu).
+    if (!this.canPause() && !this.isDead()) return;
     this.paused = true;
     this.buildOverlay();
   }
@@ -110,68 +119,47 @@ export class PauseController {
     const cx = cam.width / 2;
     const cy = cam.height / 2;
     const c = this.scene.add.container(0, 0).setDepth(60);
+    const panel = this.pal?.panel ?? 0x16213e;
+    const border = this.pal?.panelBorder ?? 0xffffff;
+    const textCol = this.pal?.text ?? '#ffffff';
 
-    c.add(
-      this.scene.add
-        .rectangle(cx, cy, cam.width, cam.height, 0x000000, 0.7),
-    );
-    c.add(
-      this.scene.add
-        .rectangle(cx, cy, 520, 420, 0x16213e, 0.98)
-        .setStrokeStyle(4, 0xffffff),
-    );
-    c.add(
-      this.scene.add
-        .text(cx, cy - 150, 'Paused', {
-          fontFamily: 'sans-serif', fontSize: '56px', color: '#ffffff', fontStyle: 'bold',
-        })
-        .setOrigin(0.5),
-    );
+    // Dim backdrop.
+    c.add(this.scene.add.rectangle(cx, cy, cam.width, cam.height, 0x000000, 0.72));
 
-    c.add(
-      this.scene.add
-        .text(cx, cy - 50, 'Score: ' + this.getScore(), {
-          fontFamily: 'sans-serif', fontSize: '40px', color: '#ffd166',
-        })
-        .setOrigin(0.5),
-    );
-    c.add(
-      this.scene.add
-        .text(cx, cy + 10, 'Time: ' + this.formatTime(this.elapsedMs), {
-          fontFamily: 'sans-serif', fontSize: '40px', color: '#9fe0ff',
-        })
-        .setOrigin(0.5),
-    );
+    // Rounded themed panel.
+    const pw = 540, ph = 440;
+    const pg = this.scene.add.graphics();
+    pg.fillStyle(panel, 0.98);
+    pg.fillRoundedRect(cx - pw / 2, cy - ph / 2, pw, ph, 28);
+    pg.lineStyle(5, border, 1);
+    pg.strokeRoundedRect(cx - pw / 2, cy - ph / 2, pw, ph, 28);
+    c.add(pg);
 
-    // Resume button.
-    const resumeBtn = this.scene.add
-      .rectangle(cx, cy + 110, 260, 70, 0x2ecc71)
-      .setStrokeStyle(3, 0xffffff)
-      .setInteractive({ useHandCursor: true });
-    c.add(resumeBtn);
-    c.add(
-      this.scene.add
-        .text(cx, cy + 110, 'Resume', {
-          fontFamily: 'sans-serif', fontSize: '30px', color: '#ffffff', fontStyle: 'bold',
-        })
-        .setOrigin(0.5),
-    );
-    resumeBtn.on('pointerup', () => this.resume());
+    const dead = this.isDead();
+    c.add(addText(this.scene, cx, cy - 140, dead ? 'Game Over' : 'Paused', { fontSize: 56, color: textCol }));
+    c.add(addText(this.scene, cx, cy - 45, 'Score: ' + this.getScore(), { fontSize: 38, color: textCol }));
+    c.add(addText(this.scene, cx, cy + 15, 'Time: ' + this.formatTime(this.elapsedMs), { fontSize: 38, color: textCol }));
 
-    // Menu button.
-    const menuBtn = this.scene.add
-      .rectangle(cx, cy + 190, 260, 60, 0x555f7a)
-      .setStrokeStyle(3, 0xffffff)
-      .setInteractive({ useHandCursor: true });
-    c.add(menuBtn);
-    c.add(
-      this.scene.add
-        .text(cx, cy + 190, 'Menu', {
-          fontFamily: 'sans-serif', fontSize: '26px', color: '#ffffff',
-        })
-        .setOrigin(0.5),
+    // When dead: Restart + Menu. Otherwise: Resume + Menu.
+    const left = dead
+      ? doodleButton(
+          this.scene, cx - 115, cy + 140, 210, 72, 'Restart',
+          this.pal?.primary ?? 0x2ecc71, this.pal?.primaryHover ?? 0x3fe086, border,
+          () => this.scene.scene.restart(), 28,
+        )
+      : doodleButton(
+          this.scene, cx - 115, cy + 140, 210, 72, 'Resume',
+          this.pal?.primary ?? 0x2ecc71, this.pal?.primaryHover ?? 0x3fe086, border,
+          () => this.resume(), 28,
+        );
+    c.add(left.container);
+
+    const menu = doodleButton(
+      this.scene, cx + 115, cy + 140, 210, 72, 'Menu',
+      this.pal?.secondary ?? 0x555f7a, this.pal?.secondaryHover ?? 0x6a7490, border,
+      () => this.scene.scene.start('Menu'), 28,
     );
-    menuBtn.on('pointerup', () => this.scene.scene.start('Menu'));
+    c.add(menu.container);
 
     this.overlay = c;
   }

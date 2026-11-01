@@ -14,6 +14,9 @@ import { GAME_WIDTH, GAME_HEIGHT, GROUND_Y, WORLD1 } from './config.ts';
 import { HatSprite, loadHatAssets } from './cosmetics.ts';
 import { SkillRuntime } from './skills.ts';
 import { PauseController } from './pause.ts';
+import { maybeUnlockAndToast, worldNumberFromKey } from './progression.ts';
+import { paletteForWorld } from './uiTheme.ts';
+import { loadJumpSfx, playJumpSfx } from './music.ts';
 
 interface Obstacle {
   /** Image sprite (collision uses its display width/height). */
@@ -69,6 +72,7 @@ export class World1Scene extends Phaser.Scene {
     this.load.image('kino-midair', 'assets/animation/mid-air-0.png');
     this.load.image('kino-dead', 'assets/kino-dead.png');
     loadHatAssets(this);
+    loadJumpSfx(this);
   }
 
   create(): void {
@@ -119,27 +123,46 @@ export class World1Scene extends Phaser.Scene {
       () => this.score,
       () => this.started && !this.dead,
       () => !this.dead,
+      paletteForWorld(1),
+      () => this.dead,
     );
 
     // Score.
+    // Score — white with a dark stroke so it reads on any background.
     this.scoreText = this.add
-      .text(GAME_WIDTH - 40, 50, '0', {
-        fontFamily: 'monospace',
-        fontSize: '56px',
-        color: '#333333',
+      .text(GAME_WIDTH / 2, 70, '0', {
+        fontFamily: 'sans-serif',
+        fontSize: '64px',
+        color: '#ffffff',
         fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 6,
       })
-      .setOrigin(1, 0.5)
-      .setDepth(10);
+      .setOrigin(0.5)
+      .setDepth(12);
+
+    // Movement-mode label (World 1 is always Jumping).
+    this.add
+      .text(GAME_WIDTH / 2, 128, 'JUMPING', {
+        fontFamily: 'sans-serif',
+        fontSize: '28px',
+        color: '#ffffff',
+        stroke: '#000000',
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5)
+      .setDepth(12);
 
     const hint = this.add
       .text(GAME_WIDTH / 2, GAME_HEIGHT * 0.35, 'Click or Space to jump', {
         fontFamily: 'sans-serif',
         fontSize: '40px',
-        color: '#333333',
+        color: '#ffffff',
+        stroke: '#000000',
+        strokeThickness: 4,
       })
       .setOrigin(0.5)
-      .setDepth(10);
+      .setDepth(12);
 
     // --- Input: reliable, scene-wide -------------------------------------
     const jump = () => {
@@ -277,6 +300,7 @@ export class World1Scene extends Phaser.Scene {
     if (this.onGround) {
       this.vy = WORLD1.jumpVelocity;
       this.onGround = false;
+      playJumpSfx(this);
     }
   }
 
@@ -381,6 +405,7 @@ export class World1Scene extends Phaser.Scene {
         this.score += 1;
         this.scoreText.setText(String(this.score));
         this.skill.notifyObstacleCleared();
+        maybeUnlockAndToast(this, worldNumberFromKey('World1'), this.score);
       }
     }
 
@@ -445,9 +470,11 @@ export class World1Scene extends Phaser.Scene {
       .text(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'Game Over\nScore: ' + this.score + '\nClick to retry  -  Esc for menu', {
         fontFamily: 'sans-serif',
         fontSize: '56px',
-        color: '#333333',
+        color: '#ffffff',
         align: 'center',
         fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 6,
       })
       .setOrigin(0.5)
       .setDepth(20);

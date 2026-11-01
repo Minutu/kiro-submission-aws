@@ -31,11 +31,17 @@ import {
 import { HatSprite, loadHatAssets } from './cosmetics.ts';
 import { SkillRuntime } from './skills.ts';
 import { PauseController } from './pause.ts';
+import { maybeUnlockAndToast, worldNumberFromKey } from './progression.ts';
+import { paletteForWorld } from './uiTheme.ts';
+import { addText } from './ui.ts';
+import { loadJumpSfx, playJumpSfx } from './music.ts';
 
 const EDGE = 40;
 const PLAY_TOP = EDGE;
 const PLAY_BOTTOM = GAME_HEIGHT - EDGE;
 const SCROLL = 260; // px/s world scroll
+const FINALE_SCORE = 5; // World 5 finale trigger (lowered for testing; was 30)
+const WALK_SPEED = 220; // px/s Kiro auto-walks right during the finale
 const GAP = 300; // pipe-gap height
 const CORRIDOR = 230; // zigzag channel height
 const OBSTACLE_W = 90;
@@ -102,6 +108,9 @@ export class SequenceRunner extends Phaser.Scene {
   // Background: flight gradient sky + parallax dunes, a parallax cave backdrop
   // (zigzag), and a parallax underwater backdrop. Edge bars recolor per mode.
   private sky!: Phaser.GameObjects.Graphics;
+  /** Flipped sky gradient for reverse-gravity segments (null if not used). */
+  private skyRev: Phaser.GameObjects.Graphics | null = null;
+  private moon: Phaser.GameObjects.Image | null = null;
   private layers: ParallaxLayer[] = [];
   private caveLayers: ParallaxLayer[] = [];
   private waterLayers: ParallaxLayer[] = [];
@@ -122,6 +131,21 @@ export class SequenceRunner extends Phaser.Scene {
   private spinTimer = 0;
   private spinFlips = 0;
 
+  // World 5 finale: after the finale score, stop SPAWNING new obstacles so the
+  // current segment finishes, then once Kiro has cleared everything he drops to
+  // the ground and walks right off the screen into a gradient -> menu.
+  private finalePending = false;
+  private finale = false;
+  /** 'fall' = Kiro drops to the ground; 'walk' = he walks across the screen;
+   * 'carry' = Kiro fixed, world scrolls the gradient in until its left edge
+   * reaches the screen's left border; 'release' = he walks through the gradient
+   * to 3/4 -> menu. */
+  private finalePhase: 'fall' | 'walk' | 'carry' | 'release' = 'fall';
+  private runFrameTimer = 0;
+  private runFrame = 0;
+  private finaleRect: Phaser.GameObjects.Graphics | null = null;
+  private finaleRectW = 0;
+
   private score = 0;
   private scoreText!: Phaser.GameObjects.Text;
   private modeText!: Phaser.GameObjects.Text;
@@ -139,9 +163,8 @@ export class SequenceRunner extends Phaser.Scene {
   preload(): void {
     loadHatAssets(this);
     const t = this.seq.theme;
-    this.load.image(this.tk('bg2'), t.duneLayers[0]);
-    this.load.image(this.tk('bg1'), t.duneLayers[1]);
-    this.load.image(this.tk('bg0'), t.duneLayers[2]);
+    t.duneLayers.forEach((path, i) => this.load.image(this.tk(`dune${i}`), path));
+    if (t.moonBg) this.load.image(this.tk('moon'), t.moonBg);
     this.load.image(this.tk('cave'), t.caveBg);
     this.load.image(this.tk('water'), t.underwaterBg);
     this.load.image(this.tk('flight-up'), t.flightPillarUp);
@@ -156,6 +179,10 @@ export class SequenceRunner extends Phaser.Scene {
     this.load.image('kino-swim-down', 'assets/animation/swim_down.png');
     this.load.image('kino-transform', 'assets/animation/transform-0.png');
     this.load.image('kino-dead', 'assets/kino-dead.png');
+    // Walk frames for the World 5 finale walk-off.
+    this.load.image('kino-run-0', 'assets/animation/run-0.png');
+    this.load.image('kino-run-1', 'assets/animation/run-1.png');
+    loadJumpSfx(this);
   }
 
   create(): void {
@@ -180,6 +207,12 @@ export class SequenceRunner extends Phaser.Scene {
     this.spinning = false;
     this.spinTimer = 0;
     this.spinFlips = 0;
+    this.finalePending = false;
+    this.finale = false;
+    this.finalePhase = 'fall';
+    this.finaleRect = null;
+    this.runFrameTimer = 0;
+    this.runFrame = 0;
 
     this.zigSlope = Math.tan(Phaser.Math.DegToRad(WORLD3.diagonalAngleDeg));
     this.zigVSpeed = SCROLL * this.zigSlope;
@@ -216,20 +249,13 @@ export class SequenceRunner extends Phaser.Scene {
       () => this.score,
       () => this.started && !this.dead,
       () => !this.dead,
+      paletteForWorld(worldNumberFromKey(this.scene.key)),
+      () => this.dead,
     );
 
-    this.scoreText = this.add
-      .text(GAME_WIDTH / 2, 70, '0', {
-        fontFamily: 'sans-serif', fontSize: '64px', color: '#ffffff', fontStyle: 'bold',
-      }).setOrigin(0.5).setDepth(10);
-    this.modeText = this.add
-      .text(GAME_WIDTH / 2, 128, this.mode.toUpperCase(), {
-        fontFamily: 'sans-serif', fontSize: '28px', color: '#cfeffd',
-      }).setOrigin(0.5).setDepth(10);
-    const hint = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT * 0.42, 'Click or Space', {
-        fontFamily: 'sans-serif', fontSize: '32px', color: '#cfeffd',
-      }).setOrigin(0.5).setDepth(10);
+    this.scoreText = addText(this, GAME_WIDTH / 2, 70, '0', { fontSize: 64 }).setDepth(12);
+    this.modeText = addText(this, GAME_WIDTH / 2, 128, this.modeLabel(this.mode), { fontSize: 28 }).setDepth(12);
+    const hint = addText(this, GAME_WIDTH / 2, GAME_HEIGHT * 0.42, 'Click or Space', { fontSize: 32 }).setDepth(12);
 
     // Seed the first few openings for the starting mode.
     this.nextSpawnWorldX = PIPE_SPACING;
@@ -258,10 +284,12 @@ export class SequenceRunner extends Phaser.Scene {
 
   private primaryAction(): void {
     if (this.dead) { this.scene.restart(); return; }
+    if (this.paused || this.finale) return;
     this.started = true;
     if (this.mode === 'flight') this.vy = WORLD2.flapVelocity;
     else if (this.mode === 'underwater') this.vy = WORLD4.diveVelocity;
     else this.zigDir = (this.zigDir === 1 ? -1 : 1) as 1 | -1;
+    playJumpSfx(this);
   }
 
   // -- opening generation -------------------------------------------------
@@ -374,20 +402,26 @@ export class SequenceRunner extends Phaser.Scene {
     const topH = gapTop - PLAY_TOP;
     const botH = PLAY_BOTTOM - gapBottom;
 
-    // Pick pillar textures by the opening's mode (flight vs underwater art).
-    const upKey = o.mode === 'underwater' ? this.tk('water-up') : this.tk('flight-up');
-    const grKey = o.mode === 'underwater' ? this.tk('water-ground') : this.tk('flight-ground');
+    // Pick pillar textures by the opening's mode. For reverse-gravity worlds,
+    // underwater reuses the FLIGHT pillar textures flipped vertically.
+    const reverse = this.seq.theme.reverseGravity === true;
+    const underwater = o.mode === 'underwater';
+    const upKey = underwater && !reverse ? this.tk('water-up') : this.tk('flight-up');
+    const grKey = underwater && !reverse ? this.tk('water-ground') : this.tk('flight-ground');
+    const flipV = underwater && reverse;
     const upSrc = this.textures.get(upKey).getSourceImage();
     const grSrc = this.textures.get(grKey).getSourceImage();
     o.top = this.add
       .image(screenX, PLAY_TOP, upKey)
       .setOrigin(0.5, 0)
       .setScale(OBSTACLE_W / upSrc.width, topH / upSrc.height)
+      .setFlipY(flipV)
       .setDepth(8);
     o.bottom = this.add
       .image(screenX, PLAY_BOTTOM, grKey)
       .setOrigin(0.5, 1)
       .setScale(OBSTACLE_W / grSrc.width, botH / grSrc.height)
+      .setFlipY(flipV)
       .setDepth(8);
   }
 
@@ -396,19 +430,72 @@ export class SequenceRunner extends Phaser.Scene {
   private buildBackground(): void {
     const t = this.seq.theme;
 
+    this.moon = null;
+    this.skyRev = null;
+
     // Flight sky gradient (top -> bottom), behind everything.
     this.sky = this.add.graphics().setDepth(0);
     this.sky.fillGradientStyle(t.skyTop, t.skyTop, t.skyBottom, t.skyBottom, 1);
     this.sky.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
-    // Flight parallax dune layers (depth 2-4).
-    this.layers.push(this.buildLayer(this.tk('bg2'), 2, 0.15, GAME_HEIGHT - EDGE, 0.62));
-    this.layers.push(this.buildLayer(this.tk('bg1'), 3, 0.30, GAME_HEIGHT - EDGE, 0.42));
-    this.layers.push(this.buildLayer(this.tk('bg0'), 4, 0.55, GAME_HEIGHT - EDGE, 0.22));
+    // Reverse-gravity sky: the SAME gradient flipped vertically (skyBottom on
+    // top, skyTop at the bottom), shown during reverse-gravity segments.
+    if (t.reverseGravity) {
+      this.skyRev = this.add.graphics().setDepth(0);
+      this.skyRev.fillGradientStyle(t.skyBottom, t.skyBottom, t.skyTop, t.skyTop, 1);
+      this.skyRev.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+      this.skyRev.setAlpha(0);
+    }
 
-    // Cave + underwater full-height tiled parallax strips (depth 1), A/mirror/A.
+    // Static moon high in the sky (does not scroll); drawn above the sky but
+    // behind the dunes. Shown during flight (fades with the flight backdrop).
+    if (t.moonBg) {
+      // Top-right-ish, inset from the edges (not touching the borders).
+      this.moon = this.add
+        .image(GAME_WIDTH * 0.78, GAME_HEIGHT * 0.2, this.tk('moon'))
+        .setOrigin(0.5, 0.5)
+        .setDepth(1);
+      this.moon.setScale(Math.min(1, (GAME_WIDTH * 0.28) / this.moon.width));
+      if (t.moonBlur) this.moon.postFX.addBlur(0, 1, 1, 0.4, 0xffffff, 2);
+    }
+
+    // Flight parallax dune layers (far -> near). Graded speed + height across
+    // however many layers the theme provides.
+    const n = this.seq.theme.duneLayers.length;
+    for (let i = 0; i < n; i++) {
+      const f = n === 1 ? 0 : i / (n - 1); // 0 (far) -> 1 (near)
+      const speed = 0.15 + f * 0.45;
+      const heightFrac = 0.6 - f * 0.4; // far tall -> near short
+      this.layers.push(
+        this.buildLayer(this.tk(`dune${i}`), 2 + i, speed, GAME_HEIGHT - EDGE, heightFrac, false),
+      );
+    }
+
     this.caveLayers.push(this.buildTiledLayer(this.tk('cave'), 0.4));
-    this.waterLayers.push(this.buildTiledLayer(this.tk('water'), 0.4));
+
+    if (this.seq.theme.reverseGravity) {
+      // Reverse gravity reuses the flight dunes FLIPPED vertically, anchored to
+      // the TOP (dunes hang from the ceiling). Same textures as flight.
+      for (let i = 0; i < n; i++) {
+        const f = n === 1 ? 0 : i / (n - 1);
+        const speed = 0.15 + f * 0.45;
+        const heightFrac = 0.6 - f * 0.4;
+        this.waterLayers.push(
+          this.buildLayer(this.tk(`dune${i}`), 2 + i, speed, EDGE, heightFrac, true),
+        );
+      }
+    } else {
+      this.waterLayers.push(this.buildTiledLayer(this.tk('water'), 0.4));
+    }
+
+    // Initialize backdrop alphas to the STARTING mode so nothing is wrongly
+    // visible before the first frame of the update loop. (buildLayer creates
+    // flight dunes at alpha 1; the water/cave layers must start hidden.)
+    for (const layer of this.waterLayers) for (const p of layer.panels) p.setAlpha(this.blendWater);
+    this.sky.setAlpha(this.blendFlight);
+    this.skyRev?.setAlpha(this.blendWater);
+    this.moon?.setAlpha(this.blendFlight);
+    for (const layer of this.layers) for (const p of layer.panels) p.setAlpha(this.blendFlight);
   }
 
   /** A full-height strip tiled with the A, A-mirrored, A pattern; starts hidden. */
@@ -432,22 +519,31 @@ export class SequenceRunner extends Phaser.Scene {
     return { panels, panelWidth, speed };
   }
 
+  /**
+   * Build one parallax dune layer. `edgeY` is the anchor line and `heightFrac`
+   * the fraction of the play area the dunes rise. When `anchorTop` is true the
+   * dunes hang from the TOP edge, flipped vertically (reverse-gravity reuse of
+   * flight art); otherwise they rise from the bottom as usual.
+   */
   private buildLayer(
-    key: string, depth: number, speed: number, bottomY: number, heightFrac: number,
+    key: string, depth: number, speed: number, edgeY: number, heightFrac: number,
+    anchorTop: boolean,
   ): ParallaxLayer {
     const src = this.textures.get(key).getSourceImage();
-    const targetH = bottomY * heightFrac;
+    const playH = GAME_HEIGHT - 2 * EDGE;
+    const targetH = playH * heightFrac;
     const scale = targetH / src.height;
     const panelWidth = src.width * scale;
     const count = Math.ceil(GAME_WIDTH / panelWidth) + 2;
     const panels: Phaser.GameObjects.Image[] = [];
     for (let i = 0; i < count; i++) {
       const img = this.add
-        .image(i * panelWidth, bottomY, key)
-        .setOrigin(0, 1)
+        .image(i * panelWidth, edgeY, key)
+        .setOrigin(0, anchorTop ? 0 : 1) // top-anchored when hanging from ceiling
         .setScale(scale)
         .setDepth(depth);
       img.setFlipX(i % 2 === 1);
+      if (anchorTop) img.setFlipY(true); // flip the art vertically
       img.setData('col', i);
       panels.push(img);
     }
@@ -493,17 +589,23 @@ export class SequenceRunner extends Phaser.Scene {
     this.blendWater += (tgtWater - this.blendWater) * rate;
 
     this.sky.setAlpha(this.blendFlight);
+    this.skyRev?.setAlpha(this.blendWater);
+    this.moon?.setAlpha(this.blendFlight);
     for (const layer of this.layers) for (const p of layer.panels) p.setAlpha(this.blendFlight);
     for (const layer of this.caveLayers) for (const p of layer.panels) p.setAlpha(this.blendCave);
     for (const layer of this.waterLayers) for (const p of layer.panels) p.setAlpha(this.blendWater);
 
-    // Bar colors: blend flight -> (black for cave) / (deep water for water).
+    // Bar colors per mode. Flight uses the theme flight bars; cave uses the
+    // cave color; underwater uses a water tint, EXCEPT in reverse-gravity
+    // worlds where the top/bottom flight colors SWAP (upside-down flight).
     const flightTop = this.seq.theme.flightTopBar;
     const flightBot = this.seq.theme.flightBottomBar;
-    const caveCol = 0x000000;
-    const waterCol = 0x062033; // deep water
-    this.topBar.setFillStyle(this.blend3(flightTop, caveCol, waterCol));
-    this.bottomBar.setFillStyle(this.blend3(flightBot, caveCol, waterCol));
+    const caveCol = this.seq.theme.caveBar;
+    const reverse = this.seq.theme.reverseGravity === true;
+    const waterTop = reverse ? flightBot : 0x062033;
+    const waterBot = reverse ? flightTop : 0x062033;
+    this.topBar.setFillStyle(this.blend3(flightTop, caveCol, waterTop));
+    this.bottomBar.setFillStyle(this.blend3(flightBot, caveCol, waterBot));
   }
 
   /** Weighted blend of three colors by the current flight/cave/water weights. */
@@ -534,6 +636,12 @@ export class SequenceRunner extends Phaser.Scene {
     const timeScale = this.skill.tick(delta);
     if (!this.started) return;
     const dt = (delta / 1000) * timeScale;
+
+    if (this.finale) {
+      this.updateFinale(dt);
+      return;
+    }
+
     this.worldX += SCROLL * dt;
     this.scrollBackground(SCROLL * dt);
 
@@ -549,9 +657,12 @@ export class SequenceRunner extends Phaser.Scene {
       this.bird.y += this.zigDir * this.zigVSpeed * dt;
     }
 
-    // Keep the pipeline full of upcoming openings.
-    while (this.nextSpawnWorldX < this.worldX + GAME_WIDTH + PIPE_SPACING) {
-      this.placeNextOpening();
+    // Keep the pipeline full of upcoming openings — UNLESS the finale is
+    // pending, in which case we stop spawning so the current segment ends.
+    if (!this.finalePending) {
+      while (this.nextSpawnWorldX < this.worldX + GAME_WIDTH + PIPE_SPACING) {
+        this.placeNextOpening();
+      }
     }
 
     // Reposition pipe visuals + score + recycle.
@@ -561,6 +672,178 @@ export class SequenceRunner extends Phaser.Scene {
     this.updateKinoAnimation(dt);
     this.hat.update(this.bird.x, this.bird.y - BIRD_R);
     this.checkCollisions();
+
+    // Begin the walk-off once Kiro has cleared every remaining obstacle/vertex
+    // (nothing left at or ahead of his x), so we never yank him out of a
+    // corridor mid-segment.
+    if (this.finalePending && !this.finale) {
+      const anythingAhead = this.openings.some((o) => o.worldX >= this.worldX - PIPE_SPACING);
+      if (!anythingAhead) this.startFinale();
+    }
+  }
+
+  private isWorld5(): boolean {
+    return worldNumberFromKey(this.scene.key) === 5;
+  }
+
+  /** Begin the finale: switch to the FLIGHT backdrop and let Kiro FALL to the
+   * ground (phase 'fall'); walking + gradient come after he lands. */
+  private startFinale(): void {
+    this.finale = true;
+    this.finalePhase = 'fall';
+    this.spinning = false;
+    this.corridorGfx.clear();
+    this.mode = 'flight';
+    this.modeText.setVisible(false);
+    this.vy = 0;
+    // Backdrop is NOT snapped here — during the 'fall' phase we keep running
+    // the normal per-mode crossfade (now targeting flight), so coming from a
+    // cave/reverse segment the background fades gracefully to the flight sky.
+    // Keep Kiro where he is; gravity in the 'fall' phase brings him down.
+  }
+
+  private advanceWalkFrame(dt: number): void {
+    this.runFrameTimer += dt;
+    if (this.runFrameTimer >= 0.16) {
+      this.runFrameTimer = 0;
+      this.runFrame = this.runFrame === 0 ? 1 : 0;
+      this.bird.setTexture(this.runFrame === 0 ? 'kino-run-0' : 'kino-run-1').setScale(this.birdScale);
+    }
+  }
+
+  /** Scroll remaining obstacles off the left (background frozen). */
+  private scrollRemainingObstacles(dx: number): void {
+    for (const o of this.openings) {
+      if (o.kind === 'pipe' && o.top && o.bottom) { o.top.x -= dx; o.bottom.x -= dx; }
+    }
+    this.openings = this.openings.filter((o) => {
+      const gone = (o.top?.x ?? -999) < -OBSTACLE_W;
+      if (gone) { o.top?.destroy(); o.bottom?.destroy(); }
+      return !gone;
+    });
+  }
+
+  /**
+   * Three-phase finale:
+   *  - walk:    Kiro's x advances across the screen (background frozen) until
+   *             he reaches ~80% width; remaining obstacles scroll off.
+   *  - carry:   Kiro held at that screen x while the world scrolls left, moving
+   *             the gradient rect in until its LEFT edge reaches the screen's
+   *             left border.
+   *  - release: Kiro walks right again, through the gradient, until he is 3/4
+   *             across it -> back to the menu.
+   */
+  private updateFinale(dt: number): void {
+    const dx = SCROLL * dt;
+    const groundY = PLAY_BOTTOM - BIRD_R;
+
+    if (this.finalePhase === 'fall') {
+      // Keep crossfading the backdrop toward flight (mode is already 'flight'),
+      // so coming from cave/reverse it fades gracefully instead of snapping.
+      this.updateBackgroundForMode(dt);
+      // Kiro falls under gravity to the ground, showing the falling frame.
+      this.vy += WORLD2.gravity * dt;
+      this.bird.y += this.vy * dt;
+      this.bird.setTexture('kino-fall').setScale(this.birdScale);
+      const landed = this.bird.y >= groundY;
+      if (landed) { this.bird.y = groundY; this.vy = 0; }
+      // Only start walking once Kiro has landed AND the backdrop has faded to
+      // flight, so the transition is graceful.
+      if (landed && this.blendFlight > 0.98) {
+        this.bird.setTexture('kino-run-0').setScale(this.birdScale);
+        this.spawnFinaleGradient();
+        this.finalePhase = 'walk';
+        // Kiro has touched down in his hometown and takes his first step — the
+        // moment he's back in control. A quiet, wondering beat.
+        this.showFinaleNotice('Is this it...?');
+      }
+      this.hat.update(this.bird.x, this.bird.y - BIRD_R);
+      return;
+    }
+
+    this.advanceWalkFrame(dt);
+    const rect = this.finaleRect!;
+
+    if (this.finalePhase === 'walk') {
+      this.scrollRemainingObstacles(dx);
+      this.bird.x += WALK_SPEED * dt;
+      if (this.bird.x >= GAME_WIDTH * 0.8) {
+        this.bird.x = GAME_WIDTH * 0.8;
+        this.finalePhase = 'carry';
+      }
+    } else if (this.finalePhase === 'carry') {
+      // Camera follows Kiro: the world scrolls left under him and the gradient
+      // rect slides in until its left edge (rect.x, origin 0) reaches x=0.
+      this.scrollBackground(dx);
+      rect.x -= dx;
+      if (rect.x <= 0) {
+        rect.x = 0;
+        this.finalePhase = 'release';
+      }
+    } else {
+      // release: Kiro walks right through the now-stationary gradient.
+      this.bird.x += WALK_SPEED * dt;
+      const threeQuarters = rect.x + this.finaleRectW * 0.75;
+      if (this.bird.x >= threeQuarters) {
+        this.scene.start('EndCinematic');
+      }
+    }
+
+    this.hat.update(this.bird.x, this.bird.y - BIRD_R);
+  }
+
+  /** Create the right-pointing transparent->white gradient (full height, 2x
+   * screen width) as a GRAPHICS fill — no texture stretching, so there is no
+   * sampling artifact / white line at the left edge. Starts just off the right
+   * side of the screen (scrolled in during the 'carry' phase). */
+  private spawnFinaleGradient(): void {
+    this.finaleRectW = GAME_WIDTH * 2;
+    const g = this.add.graphics().setDepth(50);
+    // Per-corner alpha: left corners fully transparent, right corners opaque
+    // white -> a clean horizontal transparent->white gradient.
+    g.fillGradientStyle(0xffffff, 0xffffff, 0xffffff, 0xffffff, 0, 1, 0, 1);
+    // Drawn in local space: left edge at x=0, full height (a touch taller than
+    // the screen so no top/bottom edge shows). g.x is the on-screen left edge.
+    g.fillRect(0, -10, this.finaleRectW, GAME_HEIGHT + 20);
+    g.x = GAME_WIDTH + 40; // left edge starts just off the right of the screen
+    g.y = 0;
+    this.finaleRect = g;
+  }
+
+  /** A styled, World-5-themed notification that drifts in, holds, and fades out.
+   * Used for the quiet "Is this it...?" beat the moment Kiro lands at the end of
+   * the final world. Sits above everything (incl. the finale gradient). */
+  private showFinaleNotice(message: string): void {
+    const pal = paletteForWorld(5);
+    const cam = this.cameras.main;
+    const cx = cam.width / 2;
+    const y0 = cam.height * 0.3;
+
+    const c = this.add.container(cx, y0).setDepth(120);
+
+    const pw = 560, ph = 110;
+    const panel = this.add.graphics();
+    panel.fillStyle(pal.panel, 0.92);
+    panel.fillRoundedRect(-pw / 2, -ph / 2, pw, ph, 22);
+    panel.lineStyle(4, pal.panelBorder, 1);
+    panel.strokeRoundedRect(-pw / 2, -ph / 2, pw, ph, 22);
+
+    const txt = addText(this, 0, 0, message, { fontSize: 46, color: pal.text })
+      .setOrigin(0.5);
+    // A soft red glow on the text to match the eerie, final-world mood.
+    txt.setShadow(0, 0, '#ff3b6b', 12, true, true);
+
+    c.add([panel, txt]);
+
+    // Drift down + fade in, hold, then fade out and clean up.
+    c.setAlpha(0);
+    this.tweens.add({ targets: c, alpha: 1, y: y0 + 16, duration: 600, ease: 'Quad.out' });
+    this.time.delayedCall(2600, () => {
+      this.tweens.add({
+        targets: c, alpha: 0, y: y0, duration: 700, ease: 'Quad.in',
+        onComplete: () => c.destroy(),
+      });
+    });
   }
 
   /** Per-mode Kino frame + the transition spin telegraph. */
@@ -598,7 +881,7 @@ export class SequenceRunner extends Phaser.Scene {
   private setControlMode(next: MovementMode): void {
     if (next === this.mode) return;
     this.mode = next;
-    this.modeText.setText(next.toUpperCase());
+    this.modeText.setText(this.modeLabel(next));
     if (next === 'zigzag') {
       this.zigDir = 1;
     } else {
@@ -613,6 +896,13 @@ export class SequenceRunner extends Phaser.Scene {
     this.spinTimer = 0;
     this.spinFlips = 0;
     this.bird.setTexture('kino-transform').setScale(this.birdScale).setFlipX(false);
+  }
+
+  /** HUD label for a mode. In reverse-gravity worlds, underwater reads as
+   * "REVERSE GRAVITY" since the context changed. */
+  private modeLabel(mode: MovementMode): string {
+    if (mode === 'underwater' && this.seq.theme.reverseGravity) return 'REVERSE GRAVITY';
+    return mode.toUpperCase();
   }
 
   private updateOpenings(): void {
@@ -643,6 +933,13 @@ export class SequenceRunner extends Phaser.Scene {
         this.score += 1;
         this.scoreText.setText(String(this.score));
         this.skill.notifyObstacleCleared();
+        maybeUnlockAndToast(this, worldNumberFromKey(this.scene.key), this.score);
+        // World 5 finale: once the finale score is hit, mark it PENDING. We
+        // stop spawning new obstacles but let the current segment finish; the
+        // walk-off begins only after Kiro clears everything (see update loop).
+        if (this.isWorld5() && !this.finalePending && !this.finale && this.score >= FINALE_SCORE) {
+          this.finalePending = true;
+        }
       }
       this.setControlMode(o.modeAfter);
     }
@@ -697,19 +994,10 @@ export class SequenceRunner extends Phaser.Scene {
 
   private drawCorridor(): void {
     this.corridorGfx.clear();
-    // Thicker, brighter path lines for the zigzag channel.
-    this.corridorGfx.lineStyle(14, 0x6fe0a0, 1);
     const half = CORRIDOR / 2;
 
-
-
-    // Draw the channel by connecting the STORED vertices directly (not by
-    // per-pixel sampling, which could lose already-crossed segments). Split the
-    // vertex list into CONTIGUOUS runs (adjacent in the opening timeline with
-    // no non-vertex opening between them) so separate zigzag segments are never
-    // joined by a stray line. Each run spans from left-of-screen (crossed) to
-    // right-of-screen (upcoming), so the whole visible tunnel is drawn,
-    // including the parts Kino just passed.
+    // Collect CONTIGUOUS vertex runs (so separate zigzag segments are never
+    // joined by a stray line), then build each run's top/bottom polylines.
     const runs: Opening[][] = [];
     let current: Opening[] = [];
     for (const o of this.openings) {
@@ -722,18 +1010,84 @@ export class SequenceRunner extends Phaser.Scene {
     }
     if (current.length > 0) runs.push(current);
 
+    const polylines: Array<Array<[number, number]>> = [];
     for (const run of runs) {
       if (run.length < 2) continue;
-      // Connect ONLY the real vertices with straight legs. No synthetic
-      // extension before the first vertex (so the tunnel starts exactly at the
-      // seam) and none after the last (so a crossed leg keeps its real slope
-      // and scrolls off naturally, like a flight pipe, instead of visibly
-      // straightening out).
       const pts: Array<[number, number]> = run.map((v) => [this.worldToScreen(v.worldX), v.centerY]);
-      const topPts: Array<[number, number]> = pts.map(([x, y]) => [x, y - half]);
-      const botPts: Array<[number, number]> = pts.map(([x, y]) => [x, y + half]);
-      this.strokePolyline(topPts);
-      this.strokePolyline(botPts);
+      polylines.push(pts.map(([x, y]) => [x, y - half]));
+      polylines.push(pts.map(([x, y]) => [x, y + half]));
+    }
+
+    if (this.seq.theme.icyCorridor) {
+      // Icy look: blue icicles growing INTO the channel from each wall (top
+      // wall hangs down, bottom wall rises up), with a light-cyan tip -> deep
+      // blue base gradient, plus a crisp wall line so the edge reads clearly.
+      for (const run of runs) {
+        if (run.length < 2) continue;
+        const pts: Array<[number, number]> = run.map((v) => [this.worldToScreen(v.worldX), v.centerY]);
+        const topWall = pts.map(([x, y]) => [x, y - half] as [number, number]);
+        const botWall = pts.map(([x, y]) => [x, y + half] as [number, number]);
+        this.drawIcicleWall(topWall, +1); // icicles point down (into channel)
+        this.drawIcicleWall(botWall, -1); // icicles point up (into channel)
+      }
+      // Crisp pale-ice wall lines on top of the icicle bases.
+      this.corridorGfx.lineStyle(6, 0xdff3ff, 1);
+      for (const pl of polylines) this.strokePolyline(pl);
+    } else if (this.seq.theme.laserCorridor) {
+      // Laser look: thick bright-red outer glow, then a thin white inner core
+      // on top — reads as a red->white gradient laser beam.
+      this.corridorGfx.lineStyle(20, 0xff2a2a, 0.55);
+      for (const pl of polylines) this.strokePolyline(pl);
+      this.corridorGfx.lineStyle(12, 0xff3b3b, 1);
+      for (const pl of polylines) this.strokePolyline(pl);
+      this.corridorGfx.lineStyle(5, 0xffffff, 1);
+      for (const pl of polylines) this.strokePolyline(pl);
+    } else {
+      this.corridorGfx.lineStyle(14, 0x6fe0a0, 1);
+      for (const pl of polylines) this.strokePolyline(pl);
+    }
+  }
+
+  /**
+   * Draw a row of icicles hanging off a wall polyline. `dir` is +1 for icicles
+   * pointing DOWN (top wall) or -1 for UP (bottom wall). Each icicle is a thin
+   * triangle filled with a vertical icy gradient: pale cyan at the base (on the
+   * wall) fading to a translucent light-blue tip.
+   */
+  private drawIcicleWall(wall: Array<[number, number]>, dir: number): void {
+    const g = this.corridorGfx;
+    const SPACING = 26;   // horizontal px between icicle centers
+    const BASE_W = 16;    // icicle base width
+    const baseCol = 0x8fd4ff; // pale cyan (base, on the wall)
+    const tipCol = 0x2a79c4;  // deeper blue (tip)
+
+    // Walk each wall segment and plant icicles at even spacing along it, so the
+    // icicles follow the zigzag slope.
+    for (let i = 0; i < wall.length - 1; i++) {
+      const [x0, y0] = wall[i]!;
+      const [x1, y1] = wall[i + 1]!;
+      const segLen = Math.hypot(x1 - x0, y1 - y0);
+      if (segLen < 1) continue;
+      const nx = (x1 - x0) / segLen; // unit direction along the segment
+      const ny = (y1 - y0) / segLen;
+      const count = Math.max(1, Math.floor(segLen / SPACING));
+      for (let k = 0; k < count; k++) {
+        const t = (k + 0.5) / count;
+        const bx = x0 + (x1 - x0) * t;
+        const by = y0 + (y1 - y0) * t;
+        // Pseudo-random but stable length per icicle position.
+        const len = 18 + ((Math.abs(Math.sin(bx * 0.21 + by * 0.13)) * 22) | 0);
+        const tipX = bx;
+        const tipY = by + dir * len;
+        // Base corners spread along the wall direction.
+        const ax = bx - nx * (BASE_W / 2);
+        const ay = by - ny * (BASE_W / 2);
+        const cx = bx + nx * (BASE_W / 2);
+        const cy = by + ny * (BASE_W / 2);
+        // Gradient fill: base edge pale, tip deep blue.
+        g.fillGradientStyle(baseCol, baseCol, tipCol, tipCol, 0.95, 0.95, 0.85, 0.85);
+        g.fillTriangle(ax, ay, cx, cy, tipX, tipY);
+      }
     }
   }
 
@@ -750,18 +1104,18 @@ export class SequenceRunner extends Phaser.Scene {
   }
 
   private checkCollisions(): void {
-    // Floor/ceiling no longer kill in flight/underwater: clamp y to bounds
-    // (flappy-style). Only obstacles / corridor walls end the run.
-    if (this.mode !== 'zigzag') {
-      const ceilY = PLAY_TOP + BIRD_R;
-      const floorY = PLAY_BOTTOM - BIRD_R;
-      if (this.bird.y <= ceilY) {
-        this.bird.y = ceilY;
-        if (this.vy < 0) this.vy = 0;
-      } else if (this.bird.y >= floorY) {
-        this.bird.y = floorY;
-        if (this.vy > 0) this.vy = 0;
-      }
+    // Floor/ceiling never kill: they CLAMP Kino's y in EVERY mode (flappy-
+    // style). In zigzag this matters after a Second Chance phases Kino out of
+    // the corridor — the hard ceiling/ground still stop him going off-screen
+    // instead of letting him travel straight through.
+    const ceilY = PLAY_TOP + BIRD_R;
+    const floorY = PLAY_BOTTOM - BIRD_R;
+    if (this.bird.y <= ceilY) {
+      this.bird.y = ceilY;
+      if (this.vy < 0) this.vy = 0;
+    } else if (this.bird.y >= floorY) {
+      this.bird.y = floorY;
+      if (this.vy > 0) this.vy = 0;
     }
     // Determine if Kino currently overlaps an obstacle, and the safe y there.
     let hitSafeY: number | null = null;
@@ -828,9 +1182,10 @@ export class SequenceRunner extends Phaser.Scene {
     this.dead = true;
     this.spinning = false;
     this.bird.setTexture('kino-dead').setScale(this.birdScale).setFlipX(false);
-    this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'Game Over\nScore: ' + this.score + '\nClick to retry   -   Esc for menu', {
-        fontFamily: 'sans-serif', fontSize: '52px', color: '#ffffff', align: 'center', fontStyle: 'bold',
-      }).setOrigin(0.5).setDepth(20);
+    addText(
+      this, GAME_WIDTH / 2, GAME_HEIGHT / 2,
+      'Game Over\nScore: ' + this.score + '\nClick to retry   -   Esc for menu',
+      { fontSize: 52 },
+    ).setDepth(20);
   }
 }

@@ -3,6 +3,7 @@
 // remembered across sessions and drawn on the menu preview and in gameplay.
 
 import Phaser from 'phaser';
+import { getOwnedCosmeticCount } from './progression.ts';
 
 export interface Hat {
   id: string;
@@ -20,6 +21,18 @@ export const HATS: Hat[] = [
   { id: 'hat-3', label: 'Hat 3', textureKey: 'hat-3', path: 'assets/hats/hat-3.png' },
   { id: 'hat-4', label: 'Hat 4', textureKey: 'hat-4', path: 'assets/hats/hat-4.png' },
 ];
+
+/** The hats the player currently OWNS (earned by beating worlds), in list
+ * order. Empty until World 1 is beaten. */
+export function getOwnedHats(): Hat[] {
+  return HATS.slice(0, getOwnedCosmeticCount());
+}
+
+/** True if the given hat id is owned. */
+export function isHatOwned(id: string): boolean {
+  const idx = HATS.findIndex((h) => h.id === id);
+  return idx >= 0 && idx < getOwnedCosmeticCount();
+}
 
 /** Queue all hat textures for loading. Call from a scene's preload(). */
 export function loadHatAssets(scene: Phaser.Scene): void {
@@ -45,14 +58,16 @@ function loadEquipped(): string | null {
   }
 }
 
-/** Get the equipped hat, or null if none. */
+/** Get the equipped hat, or null if none (or if it's not owned). */
 export function getEquippedHat(): Hat | null {
   if (equippedId === null) return null;
+  if (!isHatOwned(equippedId)) return null;
   return HATS.find((h) => h.id === equippedId) ?? null;
 }
 
-/** Equip a hat by id, or pass null to remove. Persists the choice. */
+/** Equip a hat by id, or pass null to remove. Ignores un-owned ids. Persists. */
 export function setEquippedHat(id: string | null): void {
+  if (id !== null && !isHatOwned(id)) return;
   equippedId = id;
   try {
     window.localStorage.setItem(STORAGE_KEY, id ?? '');

@@ -11,8 +11,16 @@
 
 import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT } from './config.ts';
-import { HATS, getEquippedHat, setEquippedHat, loadHatAssets, type Hat } from './cosmetics.ts';
-import { SKILLS, getEquippedSkill, setEquippedSkill, type Skill } from './skills.ts';
+import { getOwnedHats, getEquippedHat, setEquippedHat, loadHatAssets, type Hat } from './cosmetics.ts';
+import { getOwnedSkills, getEquippedSkill, setEquippedSkill, type Skill } from './skills.ts';
+import {
+  isWorldUnlocked, worldNumberFromKey, getKiroDisplayName,
+  getOwnedCosmeticCount, getOwnedSkillCount,
+  consumeCosmeticsButtonHighlight, consumeSkillsButtonHighlight,
+} from './progression.ts';
+import { textStyle } from './ui.ts';
+import { latestUnlockedWorld, paletteForWorld, doodleButton, type UIPalette } from './uiTheme.ts';
+import { MENU_BG_SCENE_KEY } from './menuBackground.ts';
 
 interface WorldButton {
   sceneKey: string;
@@ -23,12 +31,13 @@ interface WorldButton {
 }
 
 // Listed top-to-bottom: World 5 at the top down to World 1 at the bottom.
+// Colors match each world's theme.
 const WORLDS: WorldButton[] = [
-  { sceneKey: 'World5', title: 'World 5', subtitle: 'Security Citadel', color: 0xc0392b, hover: 0xe05545 },
-  { sceneKey: 'World4', title: 'World 4', subtitle: 'Ice & Underwater', color: 0x0a3d62, hover: 0x156824 },
-  { sceneKey: 'World3', title: 'World 3', subtitle: 'Memory Jungle', color: 0x8e44ad, hover: 0xa55fc4 },
-  { sceneKey: 'World2', title: 'World 2', subtitle: 'Foundry', color: 0x2e9e4f, hover: 0x3fc063 },
-  { sceneKey: 'World1', title: 'World 1', subtitle: 'Desert', color: 0x3a7bd5, hover: 0x5a97e8 },
+  { sceneKey: 'World5', title: 'FINAL WORLD', subtitle: 'Security Citadel', color: 0xd81e1e, hover: 0xf23b3b }, // bright red
+  { sceneKey: 'World4', title: 'World 4', subtitle: 'Ice & Underwater', color: 0x2a7fb5, hover: 0x3fa0dc }, // icy blue
+  { sceneKey: 'World3', title: 'World 3', subtitle: 'Memory Jungle', color: 0x2e8b4f, hover: 0x3fb568 },     // jungle green
+  { sceneKey: 'World2', title: 'World 2', subtitle: 'Foundry', color: 0xb5431e, hover: 0xdc5a2c },           // molten red-orange
+  { sceneKey: 'World1', title: 'World 1', subtitle: 'Desert', color: 0xd99a3a, hover: 0xf0b654 },            // sandy gold
 ];
 
 // --- layout constants -------------------------------------------------------
@@ -51,12 +60,19 @@ export class MenuScene extends Phaser.Scene {
   private previewHeadY = 0;
   /** The current preview hat object (destroyed/recreated on change). */
   private previewHatObj: Phaser.GameObjects.Image | null = null;
+  /** Scene position of the preview Kino center (for placing the skill badge). */
+  private previewCenterX = 0;
+  private previewCenterY = 0;
+  /** The equipped-skill badge beside the preview Kino (recreated on change). */
+  private skillBadge: Phaser.GameObjects.Container | null = null;
   private listContainer!: Phaser.GameObjects.Container;
   private scrollY = 0;
   private maxScroll = 0;
   private inventoryOpen = false;
   private whichInventory: 'cosmetics' | 'skills' = 'cosmetics';
   private inventoryContainer: Phaser.GameObjects.Container | null = null;
+  /** Palette of the latest unlocked world — drives the menu's colors. */
+  private pal!: UIPalette;
 
   constructor() {
     super('Menu');
@@ -68,10 +84,29 @@ export class MenuScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.cameras.main.setBackgroundColor('#1d2b53');
+    // Menu palette follows the LATEST unlocked world's theme.
+    const latest = latestUnlockedWorld();
+    this.pal = paletteForWorld(latest);
+    // Transparent camera so the blurred backdrop scene (below) shows through.
+    this.cameras.main.setBackgroundColor('rgba(0,0,0,0)');
     this.scrollY = 0;
     this.inventoryOpen = false;
     this.inventoryContainer = null;
+
+    // Launch the blurred parallax backdrop as a separate scene running UNDER
+    // this one (one blur pass over the whole backdrop, not per object). Restart
+    // it so it reflects the current latest-unlocked world, then keep the menu
+    // rendered on top.
+    const mgr = this.scene;
+    if (mgr.isActive(MENU_BG_SCENE_KEY)) mgr.stop(MENU_BG_SCENE_KEY);
+    mgr.launch(MENU_BG_SCENE_KEY, { worldNum: latest });
+    mgr.sendToBack(MENU_BG_SCENE_KEY);
+    mgr.bringToTop('Menu');
+
+    // Stop the backdrop scene when leaving the menu (e.g. entering a world).
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      if (mgr.isActive(MENU_BG_SCENE_KEY)) mgr.stop(MENU_BG_SCENE_KEY);
+    });
 
     this.buildPreviewPanel();
     this.buildWorldList();
@@ -106,16 +141,17 @@ export class MenuScene extends Phaser.Scene {
   // -- top preview panel ---------------------------------------------------
 
   private buildPreviewPanel(): void {
-    // Black rectangle panel.
-    this.add
-      .rectangle(GAME_WIDTH / 2, PANEL_TOP + PANEL_HEIGHT / 2, GAME_WIDTH - 40, PANEL_HEIGHT, 0x000000)
-      .setStrokeStyle(3, 0x3a4a7a);
+    // Rounded, themed panel for the Kino preview (doodle/modern look).
+    const pg = this.add.graphics();
+    pg.fillStyle(this.pal.panel, 1);
+    pg.fillRoundedRect(20, PANEL_TOP, GAME_WIDTH - 40, PANEL_HEIGHT, 28);
+    pg.lineStyle(5, this.pal.panelBorder, 1);
+    pg.strokeRoundedRect(20, PANEL_TOP, GAME_WIDTH - 40, PANEL_HEIGHT, 28);
 
-    // Title tucked at the top of the panel.
+    // Title = the current generation's display name, contoured for contrast.
     this.add
-      .text(GAME_WIDTH / 2, PANEL_TOP + 44, 'KINO', {
-        fontFamily: 'sans-serif', fontSize: '56px', color: '#ffffff', fontStyle: 'bold',
-      })
+      .text(GAME_WIDTH / 2, PANEL_TOP + 44, getKiroDisplayName(),
+        textStyle({ fontSize: 48, color: this.pal.text }))
       .setOrigin(0.5);
 
     // Centered Kino preview (sprite) with the equipped hat on top.
@@ -130,7 +166,28 @@ export class MenuScene extends Phaser.Scene {
     // there directly (no container) to avoid double-offsetting.
     this.previewHeadX = centerX;
     this.previewHeadY = centerY - kino.displayHeight / 2 + 10;
+    this.previewCenterX = centerX + kino.displayWidth / 2 + 20;
+    this.previewCenterY = centerY;
     this.renderPreviewHat();
+    this.renderSkillBadge();
+  }
+
+  /** A small round badge to the RIGHT of the preview Kino showing the equipped
+   * skill's initials in its color (empty when no skill is equipped). */
+  private renderSkillBadge(): void {
+    this.skillBadge?.destroy();
+    this.skillBadge = null;
+    const skill = getEquippedSkill();
+    if (!skill) return;
+
+    const r = 34;
+    const c = this.add.container(this.previewCenterX, this.previewCenterY).setDepth(3);
+    const circle = this.add.circle(0, 0, r, skill.color, 1).setStrokeStyle(3, 0xffffff);
+    const label = this.add
+      .text(0, 0, skill.short, textStyle({ fontSize: 20 }))
+      .setOrigin(0.5);
+    c.add([circle, label]);
+    this.skillBadge = c;
   }
 
   /** Redraw the hat sitting on top of the preview Kino from the equipped hat. */
@@ -177,6 +234,11 @@ export class MenuScene extends Phaser.Scene {
     // How far the content can scroll (content height beyond the viewport).
     const contentHeight = WORLDS.length * ROW_STEP - BTN_GAP;
     this.maxScroll = Math.max(0, contentHeight - LIST_HEIGHT);
+
+    // Start scrolled to the BOTTOM so World 1 (bottom of the list) is visible
+    // whenever the menu opens (game start / new generation).
+    this.scrollY = this.maxScroll;
+    this.listContainer.y = -this.scrollY;
   }
 
   private scrollList(dy: number): void {
@@ -187,70 +249,115 @@ export class MenuScene extends Phaser.Scene {
   private makeWorldButton(
     world: WorldButton, x: number, y: number, w: number, h: number,
   ): Phaser.GameObjects.Container {
-    const button = this.add
-      .rectangle(0, 0, w, h, world.color)
-      .setStrokeStyle(4, 0xffffff)
-      .setInteractive({ useHandCursor: true });
+    const worldNum = worldNumberFromKey(world.sceneKey);
+    const unlocked = isWorldUnlocked(worldNum);
+    const isLatest = worldNum === latestUnlockedWorld();
+    const baseColor = unlocked ? world.color : 0x2b2f38;
+    const border = unlocked ? 0xffffff : 0x565b66;
+    const radius = 24;
+
+    const children: Phaser.GameObjects.GameObject[] = [];
+
+    // Pulsing outer glow on the LATEST unlocked world, to invite a click.
+    if (isLatest) {
+      const glow = this.add.graphics();
+      const gw = w + 26, gh = h + 26;
+      glow.fillStyle(this.pal.accent, 0.5);
+      glow.fillRoundedRect(-gw / 2, -gh / 2, gw, gh, radius + 10);
+      children.push(glow);
+      this.tweens.add({
+        targets: glow, alpha: { from: 0.25, to: 0.9 }, scale: { from: 0.98, to: 1.04 },
+        duration: 850, yoyo: true, repeat: -1, ease: 'Sine.inOut',
+      });
+    }
+
+    // Rounded doodle card with a soft drop shadow.
+    const shadow = this.add.graphics();
+    shadow.fillStyle(0x000000, 0.25);
+    shadow.fillRoundedRect(-w / 2, -h / 2 + 6, w, h, radius);
+
+    const g = this.add.graphics();
+    const paint = (c: number) => {
+      g.clear();
+      g.fillStyle(c, 1);
+      g.fillRoundedRect(-w / 2, -h / 2, w, h, radius);
+      g.lineStyle(4, border, 1);
+      g.strokeRoundedRect(-w / 2, -h / 2, w, h, radius);
+    };
+    paint(baseColor);
 
     const title = this.add
-      .text(0, -22, world.title, {
-        fontFamily: 'sans-serif', fontSize: '46px', color: '#ffffff', fontStyle: 'bold',
-      })
+      .text(unlocked ? 0 : -24, -22, world.title,
+        textStyle({ fontSize: 46, color: unlocked ? '#ffffff' : '#8b90a0' }))
       .setOrigin(0.5);
     const subtitle = this.add
-      .text(0, 28, world.subtitle, {
-        fontFamily: 'sans-serif', fontSize: '26px', color: '#eaf2ff',
-      })
+      .text(unlocked ? 0 : -24, 28, unlocked ? world.subtitle : 'Locked',
+        textStyle({ fontSize: 26, color: unlocked ? '#eaf2ff' : '#6d7282' }))
       .setOrigin(0.5);
 
-    button.on('pointerover', () => button.setFillStyle(world.hover));
-    button.on('pointerout', () => button.setFillStyle(world.color));
-    button.on('pointerup', (p: Phaser.Input.Pointer) => {
-      // Only treat as a click if it wasn't a scroll-drag and inventory closed.
-      if (!this.inventoryOpen) this.scene.start(world.sceneKey);
-      void p;
-    });
+    children.push(shadow, g, title, subtitle);
 
-    return this.add.container(x, y, [button, title, subtitle]);
+    if (!unlocked) {
+      // Emoji glyphs render taller/wider than the font's reported bounds, so
+      // without padding Phaser clips the top/bottom (and sometimes the sides)
+      // of the padlock. Pad the text canvas so the whole glyph fits.
+      const lock = this.add
+        .text(w / 2 - 72, 0, '\u{1F512}', {
+          fontSize: '40px',
+          padding: { x: 8, y: 10 },
+        })
+        .setOrigin(0.5);
+      children.push(lock);
+    } else {
+      const hit = this.add.rectangle(0, 0, w, h, 0x000000, 0).setInteractive({ useHandCursor: true });
+      hit.on('pointerover', () => paint(world.hover));
+      hit.on('pointerout', () => paint(world.color));
+      hit.on('pointerup', () => { if (!this.inventoryOpen) this.scene.start(world.sceneKey); });
+      children.push(hit);
+    }
+
+    return this.add.container(x, y, children);
   }
 
   // -- cosmetics button + inventory ----------------------------------------
 
   private buildCosmeticsButton(): void {
-    const x = PANEL_TOP + 90;
-    const y = PANEL_TOP + PANEL_HEIGHT / 2;
-    const btn = this.add
-      .rectangle(x, y, 150, 72, 0x2c3e66)
-      .setStrokeStyle(3, 0xffffff)
-      .setInteractive({ useHandCursor: true });
-    this.add
-      .text(x, y, 'Cosmetics', {
-        fontFamily: 'sans-serif', fontSize: '22px', color: '#ffffff', fontStyle: 'bold',
-      })
-      .setOrigin(0.5);
-
-    btn.on('pointerover', () => btn.setFillStyle(0x3a5287));
-    btn.on('pointerout', () => btn.setFillStyle(0x2c3e66));
-    btn.on('pointerup', () => this.toggleInventory('cosmetics'));
+    // Hidden until the player owns at least one cosmetic (after beating W1).
+    if (getOwnedCosmeticCount() < 1) return;
+    const btn = doodleButton(
+      this, PANEL_TOP + 100, PANEL_TOP + PANEL_HEIGHT - 44, 170, 68, 'Cosmetics',
+      this.pal.secondary, this.pal.secondaryHover, this.pal.panelBorder,
+      () => this.toggleInventory('cosmetics'), 22,
+    );
+    // One-time appear-highlight the first time this button is ever shown.
+    if (consumeCosmeticsButtonHighlight()) this.highlightNewButton(btn.container);
   }
 
   private buildSkillsButton(): void {
-    // Mirror of the cosmetics button, on the RIGHT of Kino.
-    const x = GAME_WIDTH - (PANEL_TOP + 90);
-    const y = PANEL_TOP + PANEL_HEIGHT / 2;
-    const btn = this.add
-      .rectangle(x, y, 150, 72, 0x5a2c66)
-      .setStrokeStyle(3, 0xffffff)
-      .setInteractive({ useHandCursor: true });
-    this.add
-      .text(x, y, 'Skills', {
-        fontFamily: 'sans-serif', fontSize: '24px', color: '#ffffff', fontStyle: 'bold',
-      })
-      .setOrigin(0.5);
+    // Hidden until the player owns at least one skill (after beating W2).
+    if (getOwnedSkillCount() < 1) return;
+    const btn = doodleButton(
+      this, GAME_WIDTH - (PANEL_TOP + 100), PANEL_TOP + PANEL_HEIGHT - 44, 170, 68, 'Skills',
+      this.pal.secondary, this.pal.secondaryHover, this.pal.panelBorder,
+      () => this.toggleInventory('skills'), 24,
+    );
+    if (consumeSkillsButtonHighlight()) this.highlightNewButton(btn.container);
+  }
 
-    btn.on('pointerover', () => btn.setFillStyle(0x743a87));
-    btn.on('pointerout', () => btn.setFillStyle(0x5a2c66));
-    btn.on('pointerup', () => this.toggleInventory('skills'));
+  /** Pulse a just-appeared reward button (scale + glow) for ~2 seconds, once. */
+  private highlightNewButton(container: Phaser.GameObjects.Container): void {
+    // A soft accent glow behind the button, tweened for ~2s then removed.
+    const glow = this.add.circle(container.x, container.y, 70, this.pal.accent, 0.5).setDepth(container.depth - 1);
+    this.tweens.add({
+      targets: glow, alpha: { from: 0.55, to: 0.1 }, scale: { from: 0.8, to: 1.25 },
+      duration: 500, yoyo: true, repeat: 1, ease: 'Sine.inOut',
+      onComplete: () => glow.destroy(),
+    });
+    this.tweens.add({
+      targets: container, scale: { from: 1, to: 1.12 },
+      duration: 500, yoyo: true, repeat: 1, ease: 'Sine.inOut',
+      onComplete: () => container.setScale(1),
+    });
   }
 
   private toggleInventory(which: 'cosmetics' | 'skills'): void {
@@ -271,21 +378,22 @@ export class MenuScene extends Phaser.Scene {
 
     const c = this.add.container(0, 0);
 
-    // Dim backdrop over the world list area.
-    const bg = this.add
-      .rectangle(GAME_WIDTH / 2, (LIST_TOP + LIST_BOTTOM) / 2, GAME_WIDTH - 20, LIST_HEIGHT, 0x101828, 0.97)
-      .setStrokeStyle(3, 0x3a4a7a);
-    c.add(bg);
+    // Themed rounded backdrop over the world list area.
+    const bgG = this.add.graphics();
+    bgG.fillStyle(this.pal.panel, 0.98);
+    bgG.fillRoundedRect(10, LIST_TOP, GAME_WIDTH - 20, LIST_HEIGHT, 24);
+    bgG.lineStyle(4, this.pal.panelBorder, 1);
+    bgG.strokeRoundedRect(10, LIST_TOP, GAME_WIDTH - 20, LIST_HEIGHT, 24);
+    c.add(bgG);
 
     c.add(
       this.add
-        .text(GAME_WIDTH / 2, LIST_TOP + 44, 'Cosmetics — pick a hat', {
-          fontFamily: 'sans-serif', fontSize: '34px', color: '#ffffff', fontStyle: 'bold',
-        })
+        .text(GAME_WIDTH / 2, LIST_TOP + 44, 'Cosmetics — pick a hat',
+          textStyle({ fontSize: 34, color: this.pal.text }))
         .setOrigin(0.5),
     );
 
-    // Lay out the four hats in a 2x2 grid of cells.
+    // Lay out only the OWNED hats in a 2x2 grid of cells.
     const cols = 2;
     const cellW = 300;
     const cellH = 180;
@@ -294,7 +402,7 @@ export class MenuScene extends Phaser.Scene {
     const startY = LIST_TOP + 150;
     const equipped = getEquippedHat();
 
-    HATS.forEach((hat, i) => {
+    getOwnedHats().forEach((hat, i) => {
       const col = i % cols;
       const rowIdx = Math.floor(i / cols);
       const cx = startX + col * cellW;
@@ -304,20 +412,13 @@ export class MenuScene extends Phaser.Scene {
       }
     });
 
-    // Close button.
-    const closeBtn = this.add
-      .rectangle(GAME_WIDTH / 2, LIST_BOTTOM - 46, 220, 60, 0x555f7a)
-      .setStrokeStyle(3, 0xffffff)
-      .setInteractive({ useHandCursor: true });
-    c.add(closeBtn);
-    c.add(
-      this.add
-        .text(GAME_WIDTH / 2, LIST_BOTTOM - 46, 'Close', {
-          fontFamily: 'sans-serif', fontSize: '26px', color: '#ffffff',
-        })
-        .setOrigin(0.5),
+    // Close button (doodle).
+    const close = doodleButton(
+      this, GAME_WIDTH / 2, LIST_BOTTOM - 46, 220, 60, 'Close',
+      this.pal.secondary, this.pal.secondaryHover, this.pal.panelBorder,
+      () => this.closeInventory(), 26,
     );
-    closeBtn.on('pointerup', () => this.closeInventory());
+    c.add(close.container);
 
     c.setDepth(50);
     this.inventoryContainer = c;
@@ -343,7 +444,8 @@ export class MenuScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     cell.on('pointerup', () => {
-      setEquippedHat(hat.id);
+      // Toggle: clicking the equipped hat again unequips it.
+      setEquippedHat(selected ? null : hat.id);
       this.renderPreviewHat();
       this.refreshInventory();
     });
@@ -373,43 +475,37 @@ export class MenuScene extends Phaser.Scene {
     this.inventoryOpen = true;
     const c = this.add.container(0, 0);
 
-    const bg = this.add
-      .rectangle(GAME_WIDTH / 2, (LIST_TOP + LIST_BOTTOM) / 2, GAME_WIDTH - 20, LIST_HEIGHT, 0x101828, 0.97)
-      .setStrokeStyle(3, 0x3a4a7a);
-    c.add(bg);
+    const bgG = this.add.graphics();
+    bgG.fillStyle(this.pal.panel, 0.98);
+    bgG.fillRoundedRect(10, LIST_TOP, GAME_WIDTH - 20, LIST_HEIGHT, 24);
+    bgG.lineStyle(4, this.pal.panelBorder, 1);
+    bgG.strokeRoundedRect(10, LIST_TOP, GAME_WIDTH - 20, LIST_HEIGHT, 24);
+    c.add(bgG);
 
     c.add(
       this.add
-        .text(GAME_WIDTH / 2, LIST_TOP + 44, 'Skills — pick a super power', {
-          fontFamily: 'sans-serif', fontSize: '34px', color: '#ffffff', fontStyle: 'bold',
-        })
+        .text(GAME_WIDTH / 2, LIST_TOP + 44, 'Skills — pick a super power',
+          textStyle({ fontSize: 34, color: this.pal.text }))
         .setOrigin(0.5),
     );
 
-    // Three skills stacked vertically.
+    // Only the OWNED skills, stacked vertically.
     const equipped = getEquippedSkill();
     const startY = LIST_TOP + 150;
     const rowH = 130;
-    SKILLS.forEach((skill, i) => {
+    getOwnedSkills().forEach((skill, i) => {
       const cy = startY + i * rowH;
       for (const obj of this.makeSkillCell(skill, GAME_WIDTH / 2, cy, equipped?.id === skill.id)) {
         c.add(obj);
       }
     });
 
-    const closeBtn = this.add
-      .rectangle(GAME_WIDTH / 2, LIST_BOTTOM - 46, 220, 60, 0x555f7a)
-      .setStrokeStyle(3, 0xffffff)
-      .setInteractive({ useHandCursor: true });
-    c.add(closeBtn);
-    c.add(
-      this.add
-        .text(GAME_WIDTH / 2, LIST_BOTTOM - 46, 'Close', {
-          fontFamily: 'sans-serif', fontSize: '26px', color: '#ffffff',
-        })
-        .setOrigin(0.5),
+    const close = doodleButton(
+      this, GAME_WIDTH / 2, LIST_BOTTOM - 46, 220, 60, 'Close',
+      this.pal.secondary, this.pal.secondaryHover, this.pal.panelBorder,
+      () => this.closeInventory(), 26,
     );
-    closeBtn.on('pointerup', () => this.closeInventory());
+    c.add(close.container);
 
     c.setDepth(50);
     this.inventoryContainer = c;
@@ -435,7 +531,9 @@ export class MenuScene extends Phaser.Scene {
       .setOrigin(0, 0.5);
 
     cell.on('pointerup', () => {
-      setEquippedSkill(skill.id);
+      // Toggle: clicking the equipped skill again unequips it.
+      setEquippedSkill(selected ? null : skill.id);
+      this.renderSkillBadge();
       this.refreshInventory();
     });
 
@@ -452,4 +550,5 @@ export class MenuScene extends Phaser.Scene {
         return 'For 4s, a hit teleports you to safety';
     }
   }
+
 }

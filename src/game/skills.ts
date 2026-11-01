@@ -13,6 +13,7 @@
 // scene drives it the same way.
 
 import Phaser from 'phaser';
+import { getOwnedSkillCount } from './progression.ts';
 
 export type SkillId = 'time-slow' | 'second-chance' | 'ultra-instinct';
 
@@ -44,12 +45,26 @@ function loadEquipped(): SkillId | null {
   }
 }
 
+/** The skills the player currently OWNS (earned by beating worlds), in list
+ * order. Empty until World 2 is beaten. */
+export function getOwnedSkills(): Skill[] {
+  return SKILLS.slice(0, getOwnedSkillCount());
+}
+
+/** True if the given skill id is owned. */
+export function isSkillOwned(id: SkillId): boolean {
+  const idx = SKILLS.findIndex((s) => s.id === id);
+  return idx >= 0 && idx < getOwnedSkillCount();
+}
+
 export function getEquippedSkill(): Skill | null {
   if (equippedId === null) return null;
+  if (!isSkillOwned(equippedId)) return null;
   return SKILLS.find((s) => s.id === equippedId) ?? null;
 }
 
 export function setEquippedSkill(id: SkillId | null): void {
+  if (id !== null && !isSkillOwned(id)) return;
   equippedId = id;
   try {
     window.localStorage.setItem(STORAGE_KEY, id ?? '');
@@ -134,6 +149,8 @@ export class SkillRuntime {
         fontSize: '22px',
         color: '#ffffff',
         fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 4,
       })
       .setOrigin(0.5)
       .setDepth(44);
