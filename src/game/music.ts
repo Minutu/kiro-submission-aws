@@ -9,8 +9,8 @@ import Phaser from 'phaser';
 
 export const MUSIC_KEY = 'game-music';
 const MUSIC_PATH = 'assets/Audio/game-music.mp3';
-/** Quiet background level. */
-const MUSIC_VOLUME = 0.05;
+/** Very quiet background level — barely audible. */
+const MUSIC_VOLUME = 0.015;
 
 export const JUMP_SFX_KEY = 'sfx-jump';
 const JUMP_SFX_PATH = 'assets/jump.wav';

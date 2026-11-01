@@ -86,6 +86,14 @@ export class StartScreen extends Phaser.Scene {
       ease: 'Sine.inOut',
     });
 
+    // Start the looping music right away. Browsers block audio autoplay until a
+    // user gesture, so if the audio context is still locked we also start it
+    // the moment it unlocks (first interaction anywhere).
+    startMusic(this);
+    if (this.sound.locked) {
+      this.sound.once(Phaser.Sound.Events.UNLOCKED, () => startMusic(this));
+    }
+
     // Start on click or Space.
     const go = () => this.begin();
     this.input.once('pointerdown', go);
@@ -93,8 +101,8 @@ export class StartScreen extends Phaser.Scene {
   }
 
   private begin(): void {
-    // This click is a valid user gesture, so the browser lets audio start.
-    // The looping background music then persists across every later scene.
+    // Music was started on load; ensure it's going in case autoplay was blocked
+    // until this gesture.
     startMusic(this);
     // Already saw the opening cinematic -> straight to the menu. Otherwise play
     // the intro, which marks itself seen and then goes to the menu.
